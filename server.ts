@@ -127,6 +127,13 @@ api.post("/users/profile", authenticate, async (req: any, res) => {
 
     if (Object.keys(updatePayload).length > 0) {
       await authAdmin.updateUser(req.user.uid, updatePayload);
+      
+      // Also sync to Firestore profiles collection as a failsafe
+      const firestore = admin.firestore();
+      await firestore.collection('profiles').doc(req.user.uid).set({
+        displayName: displayName || existingUser.displayName,
+        photoURL: photoURL || null
+      }, { merge: true });
     }
     
     res.json({ displayName: displayName || existingUser.displayName, photoURL });

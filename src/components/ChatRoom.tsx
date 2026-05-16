@@ -945,7 +945,13 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         });
         
         if (!res.ok) {
-          const errorData = await res.json().catch(() => ({}));
+          const errorText = await res.text();
+          let errorData;
+          try {
+            errorData = JSON.parse(errorText);
+          } catch (e) {
+            errorData = { error: errorText };
+          }
           throw new Error(errorData.error || `Profile update failed: ${res.status} ${res.statusText}`);
         }
         
@@ -956,7 +962,10 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       // Update Firestore profile doc
       try {
         await setDoc(doc(db, 'profiles', user.uid), {
+          uid: user.uid,
+          username: user.username,
           displayName: profileName,
+          email: user.email,
           photoURL: photoURL || null
         }, { merge: true });
       } catch (err: any) {
@@ -1088,7 +1097,49 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   };
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-pink-soft md:h-screen md:max-w-5xl md:mx-auto md:border-x-4 md:border-pink-medium md:shadow-2xl overscroll-none">
+    <div className="fixed inset-0 flex flex-col bg-pink-soft md:static md:flex-row md:h-[calc(100dvh-4rem)] md:max-w-5xl md:mx-auto md:my-8 md:rounded-[40px] md:overflow-hidden md:border-4 md:border-pink-medium md:shadow-[30px_30px_0_var(--color-pink-medium)] overscroll-none">
+      {/* "Sidebar" branding section */}
+      <aside className="hidden md:flex flex-col w-80 bg-white border-r-4 border-pink-medium shrink-0">
+        <div className="p-10">
+          <h1 className="bold-heading text-5xl italic">MBULL</h1>
+          <p className="mt-4 text-[10px] font-bold uppercase tracking-[0.2em] text-pink-bold opacity-60">Private Space</p>
+        </div>
+        
+        <div className="flex-1 p-6 space-y-4">
+          <button 
+            onClick={() => setShowProfile(true)}
+            className="w-full text-left p-4 bg-pink-soft border-2 border-pink-bold rounded-2xl flex items-center gap-3 hover:bg-pink-medium transition-colors group"
+          >
+              <div className="w-10 h-10 bg-pink-bold rounded-lg flex items-center justify-center font-bold text-white overflow-hidden shrink-0">
+                {user.photoURL ? (
+                  <img src={getFullUrl(user.photoURL)} alt="" className="w-full h-full object-cover shadow-inner" referrerPolicy="no-referrer" />
+                ) : (
+                  (user.displayName || 'A').substring(0, 2).toUpperCase()
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase text-pink-deep opacity-60 group-hover:opacity-100 transition-opacity">Account Settings</p>
+                <p className="text-sm font-semibold text-ink truncate">{user.displayName}</p>
+              </div>
+          </button>
+
+          <button 
+            onClick={onLogout}
+            className="w-full text-left p-4 hover:bg-pink-soft rounded-2xl flex items-center gap-3 transition-colors text-pink-deep"
+          >
+            <LogOut className="w-5 h-5" />
+            <span className="text-sm font-bold italic">Logout</span>
+          </button>
+        </div>
+
+        <div className="p-8 border-t border-pink-medium">
+           <div className="flex items-center gap-2 text-pink-bold opacity-40">
+             <Heart className="w-4 h-4 fill-current" />
+             <span className="text-[10px] font-bold tracking-widest uppercase">Mbull & Daffa</span>
+           </div>
+        </div>
+      </aside>
+
       {/* Main Chat Area */}
       <main className="flex-1 flex flex-col bg-pink-soft overflow-hidden relative min-h-0">
         <FloatingHearts />

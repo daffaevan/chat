@@ -16,10 +16,10 @@ service cloud.firestore {
     // --- VALIDATION HELPERS ---
     
     function isValidProfile(data) {
-      // Identity check is the most important
       return data.uid == request.auth.uid
         && data.username is string
         && data.displayName is string
+        && (data.photoURL == null || data.photoURL is string)
         && data.email is string;
     }
 
