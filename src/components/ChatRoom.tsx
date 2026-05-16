@@ -495,16 +495,20 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       const storagePath = `stickers/${user.uid}_${Date.now()}.png`;
       const storageRef = ref(storage, storagePath);
       
-      // Add fake progress since uploadString doesn't have native progress tracking in this simple way
-      const progressTimer = setInterval(() => {
-        setUploadProgress(prev => Math.min(prev + 10, 90));
-      }, 200);
+      // Update progress more naturally
+      setUploadProgress(20);
       
       try {
-        await uploadString(storageRef, base64, 'data_url');
-        clearInterval(progressTimer);
-        setUploadProgress(100);
+        // Individual timeout for storage upload (15 seconds)
+        const uploadTask = uploadString(storageRef, base64, 'data_url');
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Koneksi upload ke Storage timeout! 💔')), 15000)
+        );
+
+        setUploadProgress(50);
+        await Promise.race([uploadTask, timeoutPromise]);
         
+        setUploadProgress(80);
         const downloadURL = await getDownloadURL(storageRef);
         console.log("[STICKER] Direct upload success:", downloadURL);
 
@@ -515,17 +519,26 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
           createdAt: Date.now()
         });
 
+        setUploadProgress(100);
         setUploadError(null);
         alert('Sticker berhasil disimpan mbull! 💖');
-      } catch (err) {
-        clearInterval(progressTimer);
-        throw err;
+      } catch (err: any) {
+        console.error("Sticker Direct Upload Error:", err);
+        setUploadProgress(0);
+        
+        let errorMsg = "Gagal simpan sticker mbull! 💔";
+        if (err.code === 'storage/unauthorized') {
+          errorMsg = "Gagal! Firebase Storage menolak akses. Cek aturan security atau CORS! 🔐";
+        } else if (err.message?.includes('timeout')) {
+          errorMsg = err.message;
+        } else {
+          errorMsg += ` (${err.message || 'Error tidak dikenal'})`;
+        }
+        alert(errorMsg);
       }
     } catch (error: any) {
-      console.error("Sticker Direct Upload Error:", error);
-      if (!checkQuotaError(error)) {
-        alert(`Gagal simpan sticker mbull: ${error.message || 'Cek koneksi internet ya?'}`);
-      }
+      console.error("Sticker Process Error:", error);
+      alert(`Gagal memproses gambar mbull: ${error.message}`);
     } finally {
       if (e.target) e.target.value = '';
       setSending(false);
