@@ -64,62 +64,17 @@ const api = express.Router();
 api.get("/ping", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 api.get("/health", (req, res) => res.json({ status: "online" }));
 
-api.get("/admin/list-stickers", authenticate, async (req: any, res) => {
-  try {
-    const [files] = await bucket.getFiles({ prefix: "uploads/stickers/" });
-    const urls = files.map(file => `https://storage.googleapis.com/${bucket.name}/${file.name}`);
-    res.json(urls);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-api.post("/upload", authenticate, upload.single("file"), async (req: any, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    const type = req.body.type || "images";
-    const filename = `${Date.now()}_${Math.random().toString(36).substring(7)}${path.extname(req.file.originalname) || '.png'}`;
-    
-    const filePath = `uploads/${type}/${filename}`;
-    const file = bucket.file(filePath);
-    
-    await file.save(req.file.buffer, {
-      metadata: { contentType: req.file.mimetype },
-      public: true,
-    });
-
-    const url = `https://storage.googleapis.com/${bucket.name}/${filePath}`;
-    res.json({ url });
-  } catch (err: any) {
-    console.error("[API/upload] Error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+// Note: Uploads are now handled directly via Firebase Client SDK for better Vercel compatibility.
+// Direct uploads avoid serverless function body size limits and timeouts.
 
 api.post("/users/profile", authenticate, async (req: any, res) => {
   try {
-    const { displayName, photoData, photoURL: incomingPhotoURL } = req.body;
+    const { displayName, photoURL: incomingPhotoURL } = req.body;
     let photoURL = incomingPhotoURL || null;
     
-    // Get existing user to not logger overwrite photoURL with null if only changing name
+    // Get existing user
     const existingUser = await authAdmin.getUser(req.user.uid);
     if (!photoURL) photoURL = existingUser.photoURL || null;
-
-    if (photoData && photoData.startsWith('data:')) {
-      const filename = `avatar_${Date.now()}_${req.user.uid}.png`;
-      const base64Data = photoData.replace(/^data:image\/\w+;base64,/, "");
-      const buffer = Buffer.from(base64Data, "base64");
-      
-      const filePath = `uploads/avatars/${filename}`;
-      const file = bucket.file(filePath);
-      
-      await file.save(buffer, {
-        metadata: { contentType: "image/png" },
-        public: true,
-      });
-      
-      photoURL = `https://storage.googleapis.com/${bucket.name}/${filePath}`;
-    }
 
     const updatePayload: any = {};
     if (displayName) updatePayload.displayName = displayName;
@@ -128,13 +83,11 @@ api.post("/users/profile", authenticate, async (req: any, res) => {
     if (Object.keys(updatePayload).length > 0) {
       await authAdmin.updateUser(req.user.uid, updatePayload);
       
-      // Also sync to Firestore profiles collection as a failsafe
+      // Sync to Firestore
       const firestore = admin.firestore();
       await firestore.collection('profiles').doc(req.user.uid).set({
         uid: req.user.uid,
-        username: existingUser.email?.split('@')[0] || req.user.uid, // Fallback username
         displayName: displayName || existingUser.displayName,
-        email: existingUser.email || '',
         photoURL: photoURL || null
       }, { merge: true });
     }
