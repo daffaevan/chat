@@ -8,7 +8,7 @@ import { LocalUser } from '../hooks/useAuth';
 import { format } from 'date-fns';
 import { getCroppedImg } from '../lib/imageUtils';
 import { VirtualKeyboard } from './VirtualKeyboard';
-import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, auth, storage, handleFirestoreError, OperationType } from '../lib/firebase';
 import { 
   collection, 
   query, 
@@ -27,6 +27,7 @@ import {
   Timestamp,
   getDocs
 } from 'firebase/firestore';
+import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 
 interface Message {
   id: string;
@@ -938,7 +939,26 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       const photoChanged = profilePhoto.startsWith('data:');
 
       if (nameChanged || photoChanged) {
-        console.log("[PROFILE] Updating via API...");
+        console.log("[PROFILE] Updating profile...");
+        
+        let clientPhotoURL = undefined;
+        
+        // Strategy: Upload to storage from client first if it's a base64 image
+        // This avoids Vercel's payload limit (4.5MB)
+        if (photoChanged) {
+          try {
+            console.log("[PROFILE] Uploading image to storage from client...");
+            const storagePath = `avatars/${user.uid}_${Date.now()}.png`;
+            const storageRef = ref(storage, storagePath);
+            await uploadString(storageRef, profilePhoto, 'data_url');
+            clientPhotoURL = await getDownloadURL(storageRef);
+            console.log("[PROFILE] Image uploaded:", clientPhotoURL);
+            photoURL = clientPhotoURL;
+          } catch (storageErr) {
+            console.warn("[PROFILE] Storage upload failed, will try via API", storageErr);
+          }
+        }
+
         const res = await fetch('/api/users/profile', {
           method: 'POST',
           headers: { 
@@ -947,7 +967,9 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
           },
           body: JSON.stringify({ 
             displayName: profileName.trim(),
-            photoData: photoChanged ? profilePhoto : undefined 
+            // Only send photoData if client upload failed, otherwise send the URL
+            photoData: (photoChanged && !clientPhotoURL) ? profilePhoto : undefined,
+            photoURL: clientPhotoURL
           })
         });
         
@@ -956,13 +978,19 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
           console.log("[PROFILE] API Success:", data);
           photoURL = data.photoURL || photoURL;
         } else {
-          const errorData = await res.json().catch(() => ({ error: 'Unknown error' }));
-          throw new Error(errorData.error || 'Gagal update profil di server mbull! 💔');
+          const errorText = await res.text();
+          let errorMessage = 'Gagal update profil di server mbull! 💔';
+          try {
+            const errorData = JSON.parse(errorText);
+            errorMessage = errorData.error || errorMessage;
+          } catch (e) {
+            errorMessage = `Server error (${res.status}): ${errorText.substring(0, 50)}...`;
+          }
+          throw new Error(errorMessage);
         }
       }
 
       // Update Firestore profile doc (Primary source of truth for our app)
-      // This ensures Firestore is in sync even if the backend sync had a delay
       console.log("[PROFILE] Updating Firestore...");
       try {
         await setDoc(doc(db, 'profiles', user.uid), {

@@ -98,12 +98,12 @@ api.post("/upload", authenticate, upload.single("file"), async (req: any, res) =
 
 api.post("/users/profile", authenticate, async (req: any, res) => {
   try {
-    const { displayName, photoData } = req.body;
-    let photoURL = null;
+    const { displayName, photoData, photoURL: incomingPhotoURL } = req.body;
+    let photoURL = incomingPhotoURL || null;
     
-    // Get existing user to not overwrite photoURL with null if only changing name
+    // Get existing user to not logger overwrite photoURL with null if only changing name
     const existingUser = await authAdmin.getUser(req.user.uid);
-    photoURL = existingUser.photoURL || null;
+    if (!photoURL) photoURL = existingUser.photoURL || null;
 
     if (photoData && photoData.startsWith('data:')) {
       const filename = `avatar_${Date.now()}_${req.user.uid}.png`;
