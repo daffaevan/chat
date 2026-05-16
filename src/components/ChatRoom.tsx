@@ -421,14 +421,16 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       checkQuotaError(err);
     });
 
-    // 3. Subscribe to App Status (Last Read)
-    const unsubscribeStatus = onSnapshot(doc(db, 'status', 'global'), (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        if (data && data.value) {
-          setGlobalLastRead(parseInt(data.value));
+    // 3. Subscribe to App Status (Last Read) - Per User
+    const unsubscribeStatus = onSnapshot(collection(db, 'status'), (snapshot) => {
+      let maxOtherRead = 0;
+      snapshot.docs.forEach(d => {
+        if (d.id !== user.uid) {
+          const val = parseInt(d.data().value || "0");
+          if (val > maxOtherRead) maxOtherRead = val;
         }
-      }
+      });
+      setGlobalLastRead(maxOtherRead);
     }, (err) => {
       console.error("Status Subscription Error:", err);
       checkQuotaError(err);
@@ -713,43 +715,56 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
   // Removed redundant effects already handled by socket init
 
-  // Global "Seen" logic
+  // Per-user "Seen" logic with optimization (throttled)
+  const lastUpdateRef = useRef<number>(0);
+  const writeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   useEffect(() => {
     if (messages.length === 0) return;
+
+    const performUpdate = async (msgTime: number) => {
+      lastUpdateRef.current = msgTime;
+      try {
+        await setDoc(doc(db, 'status', user.uid), { value: msgTime.toString() }, { merge: true });
+        socket.emit('updateLastRead', msgTime);
+      } catch (err) {
+        console.error("Error updating last read:", err);
+      }
+    };
 
     const updateLastRead = () => {
       if (document.visibilityState !== 'visible') return;
 
-      const otherMessages = messages.filter(m => m.senderId !== user.uid);
-      if (otherMessages.length === 0) return;
+      const lastMsg = messages[messages.length - 1];
+      if (!lastMsg.createdAt) return;
 
-      // Get the latest message from others
-      const latestOtherMsg = otherMessages[otherMessages.length - 1];
-      if (!latestOtherMsg.createdAt) return;
+      const msgTime = typeof lastMsg.createdAt === 'number' 
+        ? lastMsg.createdAt 
+        : (lastMsg.createdAt.toDate ? lastMsg.createdAt.toDate().getTime() : new Date(lastMsg.createdAt).getTime());
 
-      const msgTime = typeof latestOtherMsg.createdAt === 'number' 
-        ? latestOtherMsg.createdAt 
-        : (latestOtherMsg.createdAt.toDate ? latestOtherMsg.createdAt.toDate().getTime() : new Date(latestOtherMsg.createdAt).getTime());
-
-      if (msgTime > globalLastRead) {
-        setGlobalLastRead(msgTime);
-        setDoc(doc(db, 'status', 'global'), { value: msgTime.toString() }, { merge: true });
-        socket.emit('updateLastRead', msgTime);
+      if (msgTime > lastUpdateRef.current) {
+        // Throttle: If we have a pending write, don't start another one immediately
+        if (!writeTimeoutRef.current) {
+          writeTimeoutRef.current = setTimeout(() => {
+            performUpdate(msgTime);
+            writeTimeoutRef.current = null;
+          }, 2000); // Only update at most every 2 seconds
+        }
       }
     };
 
     updateLastRead();
     
-    // Also trigger on visibility back
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        updateLastRead();
-      }
+      if (document.visibilityState === 'visible') updateLastRead();
     };
 
     window.addEventListener('visibilitychange', handleVisibility);
-    return () => window.removeEventListener('visibilitychange', handleVisibility);
-  }, [messages, user.uid, globalLastRead]);
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibility);
+      if (writeTimeoutRef.current) clearTimeout(writeTimeoutRef.current);
+    };
+  }, [messages, user.uid]);
 
   // Typing and Presence logic using socket
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
