@@ -426,15 +426,19 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       let maxOtherRead = 0;
       snapshot.docs.forEach(d => {
         // Skip our own status AND skip any stale or special docs
-        // UIDs are generally long (20+ chars)
-        if (d.id !== user.uid && d.id.length > 15) {
+        if (d.id !== user.uid && d.id.length > 10) {
           const val = parseInt(d.data().value || "0");
           if (val > maxOtherRead) maxOtherRead = val;
         }
       });
-      // ONLY update if it's actually greater to avoid state loops
       if (maxOtherRead > 0) {
-        setGlobalLastRead(prev => maxOtherRead > prev ? maxOtherRead : prev);
+        setGlobalLastRead(prev => {
+          if (maxOtherRead > prev) {
+            console.log(`[STATUS] Updated globalLastRead from Firestore: ${maxOtherRead}`);
+            return maxOtherRead;
+          }
+          return prev;
+        });
       }
     }, (err) => {
       console.error("Status Subscription Error:", err);
@@ -447,6 +451,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     socket.on('lastReadUpdated', (data: any) => {
       // Data expected: { uid: string, timestamp: number }
       if (data && data.uid !== user.uid) {
+        console.log(`[SOCKET] Received lastReadUpdated from ${data.uid}: ${data.timestamp}`);
         setGlobalLastRead(prev => data.timestamp > prev ? data.timestamp : prev);
       }
     });
@@ -473,12 +478,19 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     };
   }, [user.uid, user.displayName]);
 
-  // Helper to get Date object from message
+  // Helper to reliably get a numeric timestamp from various formats
+  const getTimestamp = (val: any): number => {
+    if (!val) return 0;
+    if (typeof val === 'number') return val;
+    if (val && typeof val.toDate === 'function') return val.toDate().getTime();
+    if (val instanceof Date) return val.getTime();
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  };
+
   const getMessageDate = (m: Message): Date => {
-    if (!m.createdAt) return new Date();
-    // Handle both number and ISO string
-    const d = new Date(m.createdAt);
-    return isNaN(d.getTime()) ? new Date() : d;
+    const ts = getTimestamp(m.createdAt);
+    return ts ? new Date(ts) : new Date();
   };
 
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
@@ -733,13 +745,12 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
     const performUpdate = async (msgTime: number) => {
       lastUpdateRef.current = msgTime;
+      // 1. Live notification via Socket (Cheapest, instant)
+      socket.emit('updateLastRead', { uid: user.uid, timestamp: msgTime });
+      
       try {
-        // 1. Live notification via Socket (Cheapest, instant)
-        socket.emit('updateLastRead', { uid: user.uid, timestamp: msgTime });
-        
         // 2. Occasional persistence to Firestore (To handle boros logic)
-        // Only write to Firestore if the change is significant (more than 10s difference)
-        // OR if the user hasn't written in a while.
+        // Only write to Firestore if the change is significant (more than 15s difference)
         const shouldWriteToFirestore = !lastFirestoreWriteRef.current || (Date.now() - lastFirestoreWriteRef.current > 15000);
         
         if (shouldWriteToFirestore) {
@@ -760,22 +771,16 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       const lastMsg = messages[messages.length - 1];
       if (!lastMsg.createdAt) return;
 
-      // Optimization: If the last message was sent by us, technically we've already "seen" everything up to that point.
-      // However, we only need to update our status if there's a NEW message from someone else that we've now viewed.
-      // If we are the one who sent the latest, our status is already updated or doesn't need to move to show "seen" to others.
-      // Actually, updating on every message is fine as long as it's throttled.
-      
-      const msgTime = typeof lastMsg.createdAt === 'number' 
-        ? lastMsg.createdAt 
-        : (lastMsg.createdAt.toDate ? lastMsg.createdAt.toDate().getTime() : new Date(lastMsg.createdAt).getTime());
+      const msgTime = getTimestamp(lastMsg.createdAt);
 
       if (msgTime > lastUpdateRef.current) {
-        if (!writeTimeoutRef.current) {
-          writeTimeoutRef.current = setTimeout(() => {
-            performUpdate(msgTime);
-            writeTimeoutRef.current = null;
-          }, 3000); // Throttled to 3s for better 'boros' management
-        }
+        // Clear any existing timeout to re-fresh the throttle window with latest time
+        if (writeTimeoutRef.current) clearTimeout(writeTimeoutRef.current);
+        
+        writeTimeoutRef.current = setTimeout(() => {
+          performUpdate(msgTime);
+          writeTimeoutRef.current = null;
+        }, 1000); // Throttled to 1s for responsiveness but grouping fast bursts
       }
     };
 
@@ -1573,7 +1578,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                           </span>
                           {msg.senderId === user.uid && (
                             <div className="flex items-center ml-1">
-                              {msg.createdAt && (globalLastRead >= (typeof msg.createdAt === 'number' ? msg.createdAt : (msg.createdAt.toDate ? msg.createdAt.toDate().getTime() : new Date(msg.createdAt).getTime()))) ? (
+                              {msg.createdAt && (globalLastRead >= getTimestamp(msg.createdAt)) ? (
                                 <motion.div 
                                   initial={{ scale: 0.8, opacity: 0 }}
                                   animate={{ scale: 1, opacity: 1 }}
