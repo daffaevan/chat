@@ -925,9 +925,13 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     setUpdatingProfile(true);
     try {
       const idToken = await auth.currentUser?.getIdToken();
-      let photoURL = user.photoURL;
+      let photoURL = getFullUrl(user.photoURL);
 
-      if (profilePhoto.startsWith('data:')) {
+      // Call backend if name changed or new photo data is present
+      const nameChanged = profileName !== user.displayName;
+      const photoChanged = profilePhoto.startsWith('data:');
+
+      if (nameChanged || photoChanged) {
         const res = await fetch('/api/users/profile', {
           method: 'POST',
           headers: { 
@@ -936,7 +940,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
           },
           body: JSON.stringify({ 
             displayName: profileName,
-            photoData: profilePhoto 
+            photoData: photoChanged ? profilePhoto : undefined 
           })
         });
         
@@ -946,13 +950,18 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         }
         
         const data = await res.json();
-        photoURL = data.photoURL;
+        photoURL = data.photoURL || photoURL;
       }
 
-      await updateDoc(doc(db, 'profiles', user.uid), {
-        displayName: profileName,
-        photoURL: photoURL
-      });
+      // Update Firestore profile doc
+      try {
+        await setDoc(doc(db, 'profiles', user.uid), {
+          displayName: profileName,
+          photoURL: photoURL || null
+        }, { merge: true });
+      } catch (err: any) {
+        handleFirestoreError(err, OperationType.UPDATE, `profiles/${user.uid}`);
+      }
 
       onRefreshUser();
       setShowProfile(false);
@@ -1012,37 +1021,6 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                     <Heart className="w-3 h-3 fill-current" />
                     KOLEKSI STICKER MBULL
                   </h3>
-                  <button 
-                    onClick={async () => {
-                      try {
-                        const idToken = await auth.currentUser?.getIdToken();
-                        const res = await fetch('/api/admin/list-stickers', {
-                          method: 'GET',
-                          headers: { 'Authorization': `Bearer ${idToken}` }
-                        });
-                        const urls = await res.json();
-                        let count = 0;
-                        for (const url of urls) {
-                          if (!myStickers.some(s => s.url === url)) {
-                            await addDoc(collection(db, 'stickers'), {
-                              url,
-                              userId: user.uid,
-                              createdAt: Date.now()
-                            });
-                            count++;
-                          }
-                        }
-                        if (count > 0) alert(`${count} sticker berhasil dipulihkan! ✨`);
-                        else alert('Tidak ada sticker baru untuk dipulihkan.');
-                      } catch (err) {
-                        console.error(err);
-                      }
-                    }}
-                    className="text-[7px] font-bold text-pink-bold hover:text-pink-deep mt-1 flex items-center gap-1"
-                  >
-                    <Sparkles className="w-2 h-2" />
-                    SYNC OLD STICKERS
-                  </button>
                 </div>
                 <button 
                   type="button"
@@ -1110,38 +1088,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   };
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-pink-soft md:static md:flex-row md:h-[calc(100dvh-4rem)] md:max-w-5xl md:mx-auto md:my-8 md:rounded-[40px] md:overflow-hidden md:border-4 md:border-pink-medium md:shadow-[30px_30px_0_var(--color-pink-medium)] overscroll-none">
-      {/* "Sidebar" branding section */}
-      <aside className="hidden md:flex flex-col w-80 bg-white border-r-4 border-pink-medium shrink-0">
-        <div className="p-10">
-          <h1 className="bold-heading text-5xl italic">MBULL</h1>
-          <p className="mt-4 text-[10px] font-bold uppercase tracking-[0.2em] text-pink-bold opacity-60">Private Space</p>
-        </div>
-        
-        <div className="flex-1 p-6 space-y-4">
-          <button 
-            onClick={() => setShowProfile(true)}
-            className="w-full text-left p-4 bg-pink-soft border-2 border-pink-bold rounded-2xl flex items-center gap-3 hover:bg-pink-medium transition-colors group"
-          >
-              <div className="w-10 h-10 bg-pink-bold rounded-lg flex items-center justify-center font-bold text-white overflow-hidden shrink-0">
-                {user.photoURL ? (
-                  <img src={getFullUrl(user.photoURL)} alt="" className="w-full h-full object-cover shadow-inner" />
-                ) : (
-                  (user.displayName || 'A').substring(0, 2).toUpperCase()
-                )}
-              </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase text-pink-deep opacity-60 group-hover:opacity-100 transition-opacity">Account Settings</p>
-                <p className="text-sm font-semibold text-ink truncate">{user.displayName}</p>
-              </div>
-          </button>
-        </div>
-
-        <div className="p-8 border-t border-pink-medium">
-
-        </div>
-      </aside>
-
+    <div className="fixed inset-0 flex flex-col bg-pink-soft md:h-screen md:max-w-5xl md:mx-auto md:border-x-4 md:border-pink-medium md:shadow-2xl overscroll-none">
       {/* Main Chat Area */}
       <main className="flex-1 flex flex-col bg-pink-soft overflow-hidden relative min-h-0">
         <FloatingHearts />

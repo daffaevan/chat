@@ -62,6 +62,7 @@ const authenticate = async (req: any, res: any, next: any) => {
 const api = express.Router();
 
 api.get("/ping", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
+api.get("/health", (req, res) => res.json({ status: "online" }));
 
 api.get("/admin/list-stickers", authenticate, async (req: any, res) => {
   try {
@@ -99,6 +100,11 @@ api.post("/users/profile", authenticate, async (req: any, res) => {
   try {
     const { displayName, photoData } = req.body;
     let photoURL = null;
+    
+    // Get existing user to not overwrite photoURL with null if only changing name
+    const existingUser = await authAdmin.getUser(req.user.uid);
+    photoURL = existingUser.photoURL || null;
+
     if (photoData && photoData.startsWith('data:')) {
       const filename = `avatar_${Date.now()}_${req.user.uid}.png`;
       const base64Data = photoData.replace(/^data:image\/\w+;base64,/, "");
@@ -114,10 +120,16 @@ api.post("/users/profile", authenticate, async (req: any, res) => {
       
       photoURL = `https://storage.googleapis.com/${bucket.name}/${filePath}`;
     }
-    if (displayName) {
-      await authAdmin.updateUser(req.user.uid, { displayName });
+
+    const updatePayload: any = {};
+    if (displayName) updatePayload.displayName = displayName;
+    if (photoURL) updatePayload.photoURL = photoURL;
+
+    if (Object.keys(updatePayload).length > 0) {
+      await authAdmin.updateUser(req.user.uid, updatePayload);
     }
-    res.json({ displayName, photoURL });
+    
+    res.json({ displayName: displayName || existingUser.displayName, photoURL });
   } catch (err: any) {
     console.error("[API/profile] Error:", err);
     res.status(500).json({ error: err.message });
