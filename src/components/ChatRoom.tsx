@@ -715,20 +715,40 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
   // Global "Seen" logic
   useEffect(() => {
-    if (messages.length === 0 || document.visibilityState !== 'visible') return;
+    if (messages.length === 0) return;
 
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg.senderId !== user.uid) {
-      const msgTime = typeof lastMsg.createdAt === 'number' 
-        ? lastMsg.createdAt 
-        : new Date(lastMsg.createdAt).getTime();
+    const updateLastRead = () => {
+      if (document.visibilityState !== 'visible') return;
+
+      const otherMessages = messages.filter(m => m.senderId !== user.uid);
+      if (otherMessages.length === 0) return;
+
+      // Get the latest message from others
+      const latestOtherMsg = otherMessages[otherMessages.length - 1];
+      if (!latestOtherMsg.createdAt) return;
+
+      const msgTime = typeof latestOtherMsg.createdAt === 'number' 
+        ? latestOtherMsg.createdAt 
+        : (latestOtherMsg.createdAt.toDate ? latestOtherMsg.createdAt.toDate().getTime() : new Date(latestOtherMsg.createdAt).getTime());
 
       if (msgTime > globalLastRead) {
         setGlobalLastRead(msgTime);
         setDoc(doc(db, 'status', 'global'), { value: msgTime.toString() }, { merge: true });
         socket.emit('updateLastRead', msgTime);
       }
-    }
+    };
+
+    updateLastRead();
+    
+    // Also trigger on visibility back
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        updateLastRead();
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleVisibility);
+    return () => window.removeEventListener('visibilitychange', handleVisibility);
   }, [messages, user.uid, globalLastRead]);
 
   // Typing and Presence logic using socket
@@ -1511,14 +1531,18 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                             {format(getMessageDate(msg), 'HH:mm')}
                           </span>
                           {msg.senderId === user.uid && (
-                            <div className="flex items-center">
-                              {msg.createdAt && globalLastRead >= (typeof msg.createdAt === 'number' ? msg.createdAt : new Date(msg.createdAt).getTime()) ? (
-                                <div className="flex -space-x-1">
-                                  <Check className="w-2.5 h-2.5 text-pink-deep" strokeWidth={3} />
-                                  <Check className="w-2.5 h-2.5 text-pink-deep" strokeWidth={3} />
-                                </div>
+                            <div className="flex items-center ml-1">
+                              {msg.createdAt && (globalLastRead >= (typeof msg.createdAt === 'number' ? msg.createdAt : (msg.createdAt.toDate ? msg.createdAt.toDate().getTime() : new Date(msg.createdAt).getTime()))) ? (
+                                <motion.div 
+                                  initial={{ scale: 0.8, opacity: 0 }}
+                                  animate={{ scale: 1, opacity: 1 }}
+                                  className="flex -space-x-1.5"
+                                >
+                                  <Check className="w-2.5 h-2.5 text-pink-deep" strokeWidth={4} />
+                                  <Check className="w-2.5 h-2.5 text-pink-deep" strokeWidth={4} />
+                                </motion.div>
                               ) : (
-                                <Check className="w-2.5 h-2.5 text-pink-bold opacity-40" strokeWidth={3} />
+                                <Check className="w-2.5 h-2.5 text-pink-bold opacity-30" strokeWidth={3} />
                               )}
                             </div>
                           )}
