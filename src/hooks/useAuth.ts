@@ -42,20 +42,15 @@ export function useAuth() {
       
       if (fbUser) {
         try {
-          // Provide a faster fallback for profile fetch to prevent infinite spinning
-          const profilePromise = getDoc(doc(db, 'profiles', fbUser.uid));
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
-          );
-          
-          const profileDoc = await Promise.race([profilePromise, timeoutPromise]) as any;
+          console.log(`[AUTH] Fetching profile for ${fbUser.uid}...`);
+          const profileDoc = await getDoc(doc(db, 'profiles', fbUser.uid));
           
           if (profileDoc.exists()) {
             const profileData = profileDoc.data();
-            console.log("[AUTH] Profile found:", profileData.username);
+            console.log("[AUTH] Profile found in Firestore:", profileData);
             setUser({
               uid: fbUser.uid,
-              email: fbUser.email || '',
+              email: fbUser.email || profileData.email || '',
               username: profileData.username,
               displayName: profileData.displayName || fbUser.displayName || profileData.username,
               photoURL: profileData.photoURL || fbUser.photoURL || undefined,
@@ -63,14 +58,13 @@ export function useAuth() {
             });
 
             // Update last seen (non-blocking)
-            setDoc(doc(db, 'profiles', fbUser.uid), {
+            updateDoc(doc(db, 'profiles', fbUser.uid), {
               lastSeen: Date.now()
-            }, { merge: true }).catch(e => console.warn("Failed to update last seen:", e));
+            }).catch(e => console.warn("Failed to update last seen:", e));
           } else {
-            console.log("[AUTH] Profile not found, fallback to basic auth user");
-            // Profile doesn't exist? Fallback to basic info from Auth
+            console.log("[AUTH] Profile not found in Firestore, using Auth fallback");
             const username = fbUser.email?.split('@')[0] || fbUser.displayName?.replace(/\s+/g, '').toLowerCase() || 'user';
-            const profileData: LocalUser = {
+            const fallbackData: LocalUser = {
               uid: fbUser.uid,
               username,
               displayName: fbUser.displayName || username,
@@ -78,16 +72,16 @@ export function useAuth() {
               photoURL: fbUser.photoURL || '',
               lastSeen: Date.now()
             };
-            setUser(profileData);
+            setUser(fallbackData);
 
-            // Try to create profile in background
+            // Auto-create profile if missing
             setDoc(doc(db, 'profiles', fbUser.uid), {
-              ...profileData,
+              ...fallbackData,
               createdAt: serverTimestamp()
-            }).catch(e => console.error("Failed to auto-create profile:", e));
+            }, { merge: true }).catch(e => console.error("Failed to auto-create profile:", e));
           }
         } catch (err) {
-          console.error("[AUTH] Error in profile fetch or timeout:", err);
+          console.error("[AUTH] Error loading profile:", err);
           setUser({
             uid: fbUser.uid,
             email: fbUser.email || '',
@@ -169,17 +163,23 @@ export function useAuth() {
 
   const refreshUser = async () => {
     if (!auth.currentUser) return;
-    const profileDoc = await getDoc(doc(db, 'profiles', auth.currentUser.uid));
-    if (profileDoc.exists()) {
-      const profileData = profileDoc.data();
-      setUser({
-        uid: auth.currentUser.uid,
-        email: auth.currentUser.email || '',
-        username: profileData.username,
-        displayName: profileData.displayName || auth.currentUser.displayName || profileData.username,
-        photoURL: profileData.photoURL || auth.currentUser.photoURL || undefined,
-        lastSeen: profileData.lastSeen
-      });
+    try {
+      console.log("[AUTH] Refreshing user data from Firestore...");
+      const profileDoc = await getDoc(doc(db, 'profiles', auth.currentUser.uid));
+      if (profileDoc.exists()) {
+        const profileData = profileDoc.data();
+        console.log("[AUTH] Refreshed profile data:", profileData);
+        setUser({
+          uid: auth.currentUser.uid,
+          email: auth.currentUser.email || profileData.email || '',
+          username: profileData.username,
+          displayName: profileData.displayName || auth.currentUser.displayName || profileData.username,
+          photoURL: profileData.photoURL || auth.currentUser.photoURL || undefined,
+          lastSeen: profileData.lastSeen
+        });
+      }
+    } catch (err) {
+      console.error("[AUTH] Error refreshing user:", err);
     }
   };
 

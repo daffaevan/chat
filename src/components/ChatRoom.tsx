@@ -934,48 +934,51 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       let photoURL = getFullUrl(user.photoURL);
 
       // Call backend if name changed or new photo data is present
-      const nameChanged = profileName !== user.displayName;
+      const nameChanged = profileName.trim() !== user.displayName;
       const photoChanged = profilePhoto.startsWith('data:');
 
       if (nameChanged || photoChanged) {
-        try {
-          const res = await fetch('/api/users/profile', {
-            method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${idToken}`
-            },
-            body: JSON.stringify({ 
-              displayName: profileName,
-              photoData: photoChanged ? profilePhoto : undefined 
-            })
-          });
-          
-          if (res.ok) {
-            const data = await res.json();
-            photoURL = data.photoURL || photoURL;
-          } else {
-            console.warn('Backend profile update failed, falling back to local update only.');
-          }
-        } catch (apiErr) {
-          console.warn('API error during profile update:', apiErr);
+        console.log("[PROFILE] Updating via API...");
+        const res = await fetch('/api/users/profile', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({ 
+            displayName: profileName.trim(),
+            photoData: photoChanged ? profilePhoto : undefined 
+          })
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          console.log("[PROFILE] API Success:", data);
+          photoURL = data.photoURL || photoURL;
+        } else {
+          const errorData = await res.json().catch(() => ({ error: 'Unknown error' }));
+          throw new Error(errorData.error || 'Gagal update profil di server mbull! 💔');
         }
       }
 
       // Update Firestore profile doc (Primary source of truth for our app)
+      // This ensures Firestore is in sync even if the backend sync had a delay
+      console.log("[PROFILE] Updating Firestore...");
       try {
         await setDoc(doc(db, 'profiles', user.uid), {
           uid: user.uid,
           username: user.username,
-          displayName: profileName,
+          displayName: profileName.trim(),
           email: user.email,
           photoURL: photoURL || null
         }, { merge: true });
+        console.log("[PROFILE] Firestore updated.");
       } catch (err: any) {
+        console.error("[PROFILE] Firestore error:", err);
         handleFirestoreError(err, OperationType.UPDATE, `profiles/${user.uid}`);
       }
 
-      onRefreshUser();
+      await onRefreshUser();
       setShowProfile(false);
       alert('Profil berhasil diperbarui mbull! ✨');
     } catch (error: any) {
