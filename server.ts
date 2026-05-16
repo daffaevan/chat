@@ -132,6 +132,7 @@ app.use("/api", api);
 
 // Static / Vite
 const isProduction = process.env.NODE_ENV === "production";
+const isVercel = process.env.VERCEL === "1";
 
 async function start() {
   if (!isProduction) {
@@ -141,15 +142,19 @@ async function start() {
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!isVercel) {
+    // Standard production node environment (non-serverless)
     const distPath = path.resolve(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`[SYSTEM] Server running on 0.0.0.0:${PORT}`);
-  });
+  // Only listen on a port if we're not in a Vercel serverless function
+  if (!isVercel) {
+    httpServer.listen(PORT, "0.0.0.0", () => {
+      console.log(`[SYSTEM] Server running on 0.0.0.0:${PORT}`);
+    });
+  }
 }
 
 start().catch(console.error);
