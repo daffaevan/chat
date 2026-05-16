@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --color-pink-soft: #FFF1F2;
+  --color-pink-medium: #FBCFE8;
+  --color-pink-bold: #E89EB8;
+  --color-pink-deep: #BE185D;
+  --color-ink: #4C0519;
+  --color-surface: #FFFFFF;
+  
+  --font-sans: "Helvetica Neue", Arial, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-pink-soft text-ink font-sans antialiased;
+  }
+}
+
+.bold-heading {
+  @apply text-pink-bold font-bold uppercase tracking-tighter leading-[0.9];
+}
+
+.message-bubble {
+  @apply px-5 py-3 rounded-[22px] font-normal leading-snug max-w-full break-words;
+}
+
+.message-received {
+  @apply bg-white text-ink rounded-bl-none shadow-[0_2px_0_var(--color-pink-medium)] mr-auto;
+}
+
+.message-sent {
+  @apply bg-pink-bold text-ink rounded-br-none shadow-sm ml-auto font-medium;
+}
+
+.bold-input {
+  @apply bg-pink-bold/20 border-2 border-pink-bold px-6 py-3 rounded-[30px] font-medium text-ink placeholder:text-ink/50 focus:outline-none focus:bg-pink-bold/30 focus:border-pink-deep transition-all min-w-0 w-full caret-pink-deep;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-pink-bold);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-pink-deep);
+}

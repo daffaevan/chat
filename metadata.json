@@ -1,0 +1,6 @@
+{
+  "name": "Chat Mbull",
+  "description": "Bold and private chat space, connected to daffaevan/chat-mbull.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

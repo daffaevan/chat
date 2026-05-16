@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- PRIMITIVES ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // --- VALIDATION HELPERS ---
+    
+    function isValidProfile(data) {
+      // Identity check is the most important
+      return data.uid == request.auth.uid
+        && data.username is string
+        && data.displayName is string
+        && data.email is string;
+    }
+
+    function isValidMessage(data) {
+      return data.senderId == request.auth.uid
+        && data.type in ['text', 'image', 'audio', 'sticker']
+        && data.room == 'global';
+    }
+
+    function isValidSticker(data) {
+      return data.keys().hasAll(['url', 'userId', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.url is string
+        && data.createdAt is number;
+    }
+
+    function isValidStatus(data) {
+      return data.keys().hasAll(['value'])
+        && data.keys().size() == 1
+        && data.value is string && data.value.size() <= 100;
+    }
+
+    // --- COLLECTIONS ---
+
+    match /profiles/{uid} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // For checking usernames
+      allow create: if isOwner(uid) && isValidProfile(incoming());
+      allow update: if isOwner(uid) 
+        && isValidProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().username == existing().username; // Username immutable
+    }
+
+    match /messages/{messageId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidMessage(incoming());
+      allow update: if isSignedIn() 
+        && (
+          // Allow anyone to update reactions
+          (incoming().diff(existing()).affectedKeys().hasOnly(['reactions']))
+        );
+      allow delete: if isSignedIn() && existing().senderId == request.auth.uid;
+    }
+
+    match /stickers/{stickerId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidSticker(incoming());
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /status/{statusId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isValidStatus(incoming());
+    }
+  }
+}

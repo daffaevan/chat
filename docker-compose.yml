@@ -1,0 +1,13 @@
+services:
+  pink-chat-backend:
+    build: .
+    container_name: pink-chat-backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./chat.db:/app/chat.db
+      - ./uploads:/app/uploads
+    environment:
+      - NODE_ENV=production
+      - JWT_SECRET=ganti-pake-random-string-ya-123
+    restart: unless-stopped

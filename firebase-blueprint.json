@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "Profile": {
+      "title": "User Profile",
+      "description": "Public user profile data",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "lastSeen": { "type": "number" }
+      },
+      "required": ["uid", "username"]
+    },
+    "Message": {
+      "title": "Chat Message",
+      "description": "A single chat message",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "audioURL": { "type": "string" },
+        "audioDuration": { "type": "number" },
+        "imageUrl": { "type": "string" },
+        "stickerUrl": { "type": "string" },
+        "type": { "type": "string", "enum": ["text", "image", "audio", "sticker"] },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderPhoto": { "type": "string" },
+        "reactions": { "type": "object" },
+        "room": { "type": "string" },
+        "replyTo": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["type", "senderId", "senderName", "createdAt", "room"]
+    },
+    "Sticker": {
+      "title": "User Sticker",
+      "description": "Custom stickers added by users",
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["url", "userId", "createdAt"]
+    },
+    "AppStatus": {
+      "title": "App Status",
+      "description": "Global or per-user application status",
+      "type": "object",
+      "properties": {
+        "value": { "type": "string" }
+      },
+      "required": ["value"]
+    }
+  },
+  "firestore": {
+    "profiles/{uid}": {
+      "schema": "Profile",
+      "description": "User profiles indexed by UID"
+    },
+    "messages/{messageId}": {
+      "schema": "Message",
+      "description": "Global chat messages"
+    },
+    "stickers/{stickerId}": {
+      "schema": "Sticker",
+      "description": "User's custom stickers"
+    },
+    "status/{statusId}": {
+      "schema": "AppStatus",
+      "description": "Application state markers"
+    }
+  }
+}

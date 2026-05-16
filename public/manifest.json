@@ -1,0 +1,24 @@
+{
+  "short_name": "MBULL",
+  "name": "MBULL Private Space",
+  "description": "Kiriman cinta buat MBULL❤",
+  "icons": [
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#FFC1D6",
+  "background_color": "#FFF0F5"
+}
