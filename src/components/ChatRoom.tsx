@@ -927,93 +927,119 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
   const handleUpdateProfile = async (e: FormEvent) => {
     e.preventDefault();
-    if (updatingProfile) return;
+    if (updatingProfile || !user) return;
 
     setUpdatingProfile(true);
-    try {
-      const idToken = await auth.currentUser?.getIdToken();
-      let photoURL = getFullUrl(user.photoURL);
+    console.log("[PROFILE] Update initiated...");
 
-      // Call backend if name changed or new photo data is present
-      const nameChanged = profileName.trim() !== user.displayName;
+    // Master timeout to ensure the UI eventually unlocks no matter what
+    const masterTimeoutId = setTimeout(() => {
+      if (updatingProfile) {
+        console.error("[PROFILE] Operation timed out.");
+        setUpdatingProfile(false);
+        // We don't alert here to avoid double alerts, but we unlock the UI
+      }
+    }, 45000);
+
+    try {
+      const originalPhotoURL = getFullUrl(user.photoURL);
+      let targetPhotoURL = originalPhotoURL;
+      
+      const nameChanged = profileName.trim() !== (user.displayName || '');
       const photoChanged = profilePhoto.startsWith('data:');
 
-      if (nameChanged || photoChanged) {
-        console.log("[PROFILE] Updating profile...");
-        
-        let clientPhotoURL = undefined;
-        
-        // Strategy: Upload to storage from client first if it's a base64 image
-        // This avoids Vercel's payload limit (4.5MB)
-        if (photoChanged) {
-          try {
-            console.log("[PROFILE] Uploading image to storage from client...");
-            const storagePath = `avatars/${user.uid}_${Date.now()}.png`;
-            const storageRef = ref(storage, storagePath);
-            await uploadString(storageRef, profilePhoto, 'data_url');
-            clientPhotoURL = await getDownloadURL(storageRef);
-            console.log("[PROFILE] Image uploaded:", clientPhotoURL);
-            photoURL = clientPhotoURL;
-          } catch (storageErr) {
-            console.warn("[PROFILE] Storage upload failed, will try via API", storageErr);
-          }
-        }
+      if (!nameChanged && !photoChanged) {
+        setShowProfile(false);
+        setUpdatingProfile(false);
+        clearTimeout(masterTimeoutId);
+        return;
+      }
 
-        const res = await fetch('/api/users/profile', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`
-          },
-          body: JSON.stringify({ 
-            displayName: profileName.trim(),
-            // Only send photoData if client upload failed, otherwise send the URL
-            photoData: (photoChanged && !clientPhotoURL) ? profilePhoto : undefined,
-            photoURL: clientPhotoURL
-          })
-        });
-        
-        if (res.ok) {
-          const data = await res.json();
-          console.log("[PROFILE] API Success:", data);
-          photoURL = data.photoURL || photoURL;
-        } else {
-          const errorText = await res.text();
-          let errorMessage = 'Gagal update profil di server mbull! 💔';
-          try {
-            const errorData = JSON.parse(errorText);
-            errorMessage = errorData.error || errorMessage;
-          } catch (e) {
-            errorMessage = `Server error (${res.status}): ${errorText.substring(0, 50)}...`;
+      // 1. Try to upload to storage first if photo changed
+      let storageUploadedURL = null;
+      if (photoChanged) {
+        try {
+          console.log("[PROFILE] Uploading new photo to Storage...");
+          const storagePath = `avatars/${user.uid}_${Date.now()}.png`;
+          const storageRef = ref(storage, storagePath);
+          
+          const uploadTask = uploadString(storageRef, profilePhoto, 'data_url');
+          // Individual timeout for storage
+          const uploadTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Storage Timeout')), 10000));
+          
+          await Promise.race([uploadTask, uploadTimeout]);
+          storageUploadedURL = await getDownloadURL(storageRef);
+          targetPhotoURL = storageUploadedURL;
+          console.log("[PROFILE] Storage upload success.");
+        } catch (err) {
+          console.warn("[PROFILE] Storage upload failed/timed out, will try to use base64 in Firestore temporarily if small enough.", err);
+          // If the base64 is reasonably sized (< 500kb), we can try to save it to firestore directly
+          if (profilePhoto.length < 600000) {
+            targetPhotoURL = profilePhoto;
           }
-          throw new Error(errorMessage);
         }
       }
 
-      // Update Firestore profile doc (Primary source of truth for our app)
-      console.log("[PROFILE] Updating Firestore...");
+      // 2. PRIMARY SYNC: Firestore (The source of truth)
+      console.log("[PROFILE] Syncing to Firestore...");
       try {
         await setDoc(doc(db, 'profiles', user.uid), {
           uid: user.uid,
           username: user.username,
           displayName: profileName.trim(),
           email: user.email,
-          photoURL: photoURL || null
+          photoURL: targetPhotoURL || null,
+          lastUpdated: serverTimestamp()
         }, { merge: true });
-        console.log("[PROFILE] Firestore updated.");
-      } catch (err: any) {
-        console.error("[PROFILE] Firestore error:", err);
-        handleFirestoreError(err, OperationType.UPDATE, `profiles/${user.uid}`);
+        console.log("[PROFILE] Firestore sync success.");
+      } catch (fsErr: any) {
+        console.error("[PROFILE] Firestore sync failed:", fsErr);
+        if (fsErr.message?.includes('too large') || profilePhoto.length > 1000000) {
+          throw new Error("Fotonya kegedean mbull! 💔 Coba foto yang ukurannya lebih kecil ya?");
+        }
+        throw new Error("Gagal simpan profil ke database mbull. 💔");
       }
 
+      // 3. SECONDARY SYNC: Background API Call (For Firebase Auth)
+      // Do NOT await this to prevent blocking the UI
+      (async () => {
+        try {
+          const idToken = await auth.currentUser?.getIdToken();
+          if (!idToken) return;
+
+          const res = await fetch('/api/users/profile', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`
+            },
+            body: JSON.stringify({ 
+              displayName: profileName.trim(),
+              photoURL: storageUploadedURL, // Prefer the storage URL
+              photoData: (!storageUploadedURL && photoChanged && profilePhoto.length < 2000000) ? profilePhoto : undefined
+            })
+          });
+          const result = await res.json();
+          console.log("[PROFILE] API background sync success:", result);
+        } catch (apiErr) {
+          console.warn("[PROFILE] API sync failed in background:", apiErr);
+        }
+      })();
+
+      // 4. Refresh and Close
+      console.log("[PROFILE] Refreshing local user state...");
       await onRefreshUser();
+      
+      clearTimeout(masterTimeoutId);
+      setUpdatingProfile(false);
       setShowProfile(false);
       alert('Profil berhasil diperbarui mbull! ✨');
+      
     } catch (error: any) {
-      console.error('Error updating profile:', error);
-      alert(error.message);
-    } finally {
+      console.error('[PROFILE] Fatal error during save:', error);
+      clearTimeout(masterTimeoutId);
       setUpdatingProfile(false);
+      alert(error.message || 'Gagal update profil mbull! 💔');
     }
   };
 

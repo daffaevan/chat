@@ -165,10 +165,17 @@ export function useAuth() {
     if (!auth.currentUser) return;
     try {
       console.log("[AUTH] Refreshing user data from Firestore...");
-      const profileDoc = await getDoc(doc(db, 'profiles', auth.currentUser.uid));
+      // Add a timeout for the fetch
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Refresh timeout')), 8000)
+      );
+      
+      const profilePromise = getDoc(doc(db, 'profiles', auth.currentUser.uid));
+      const profileDoc = await Promise.race([profilePromise, timeoutPromise]) as any;
+
       if (profileDoc.exists()) {
         const profileData = profileDoc.data();
-        console.log("[AUTH] Refreshed profile data:", profileData);
+        console.log("[AUTH] Refreshed profile data successfully.");
         setUser({
           uid: auth.currentUser.uid,
           email: auth.currentUser.email || profileData.email || '',
