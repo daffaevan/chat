@@ -131,7 +131,10 @@ api.post("/users/profile", authenticate, async (req: any, res) => {
       // Also sync to Firestore profiles collection as a failsafe
       const firestore = admin.firestore();
       await firestore.collection('profiles').doc(req.user.uid).set({
+        uid: req.user.uid,
+        username: existingUser.email?.split('@')[0] || req.user.uid, // Fallback username
         displayName: displayName || existingUser.displayName,
+        email: existingUser.email || '',
         photoURL: photoURL || null
       }, { merge: true });
     }

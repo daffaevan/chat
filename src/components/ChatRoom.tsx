@@ -212,6 +212,12 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const [profileName, setProfileName] = useState(user.displayName || '');
   const [profilePhoto, setProfilePhoto] = useState(getFullUrl(user.photoURL) || '');
   const [updatingProfile, setUpdatingProfile] = useState(false);
+
+  useEffect(() => {
+    setProfileName(user.displayName || '');
+    setProfilePhoto(getFullUrl(user.photoURL) || '');
+  }, [user.displayName, user.photoURL]);
+
   const [globalLastRead, setGlobalLastRead] = useState<number>(0);
   const [myStickers, setMyStickers] = useState<Sticker[]>([]);
   
@@ -932,34 +938,31 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       const photoChanged = profilePhoto.startsWith('data:');
 
       if (nameChanged || photoChanged) {
-        const res = await fetch('/api/users/profile', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`
-          },
-          body: JSON.stringify({ 
-            displayName: profileName,
-            photoData: photoChanged ? profilePhoto : undefined 
-          })
-        });
-        
-        if (!res.ok) {
-          const errorText = await res.text();
-          let errorData;
-          try {
-            errorData = JSON.parse(errorText);
-          } catch (e) {
-            errorData = { error: errorText };
+        try {
+          const res = await fetch('/api/users/profile', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`
+            },
+            body: JSON.stringify({ 
+              displayName: profileName,
+              photoData: photoChanged ? profilePhoto : undefined 
+            })
+          });
+          
+          if (res.ok) {
+            const data = await res.json();
+            photoURL = data.photoURL || photoURL;
+          } else {
+            console.warn('Backend profile update failed, falling back to local update only.');
           }
-          throw new Error(errorData.error || `Profile update failed: ${res.status} ${res.statusText}`);
+        } catch (apiErr) {
+          console.warn('API error during profile update:', apiErr);
         }
-        
-        const data = await res.json();
-        photoURL = data.photoURL || photoURL;
       }
 
-      // Update Firestore profile doc
+      // Update Firestore profile doc (Primary source of truth for our app)
       try {
         await setDoc(doc(db, 'profiles', user.uid), {
           uid: user.uid,
@@ -1097,7 +1100,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   };
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-pink-soft md:static md:flex-row md:h-[calc(100dvh-4rem)] md:max-w-5xl md:mx-auto md:my-8 md:rounded-[40px] md:overflow-hidden md:border-4 md:border-pink-medium md:shadow-[30px_30px_0_var(--color-pink-medium)] overscroll-none">
+    <div className="fixed inset-0 flex flex-col bg-pink-soft md:static md:flex-row md:h-screen md:max-w-5xl md:mx-auto md:overflow-hidden md:border-x-4 md:border-pink-medium md:shadow-2xl overscroll-none">
       {/* "Sidebar" branding section */}
       <aside className="hidden md:flex flex-col w-80 bg-white border-r-4 border-pink-medium shrink-0">
         <div className="p-10">
