@@ -15,18 +15,13 @@ dotenv.config();
 if (!admin.apps.length) {
   admin.initializeApp({
     projectId: firebaseConfig.projectId,
+    storageBucket: firebaseConfig.storageBucket,
   });
 }
 const authAdmin = admin.auth();
+const bucket = admin.storage().bucket();
 
 const PORT = 3000;
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
-
-// Ensure directories
-["avatars", "audio", "images", "stickers"].forEach(sub => {
-  const p = path.join(UPLOADS_DIR, sub);
-  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
-});
 
 const app = express();
 app.use((req, res, next) => {
@@ -68,29 +63,32 @@ const api = express.Router();
 
 api.get("/ping", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 
-api.get("/admin/list-stickers", authenticate, (req: any, res) => {
+api.get("/admin/list-stickers", authenticate, async (req: any, res) => {
   try {
-    const stickersPath = path.join(UPLOADS_DIR, "stickers");
-    if (!fs.existsSync(stickersPath)) return res.json([]);
-    const files = fs.readdirSync(stickersPath);
-    const urls = files.filter(f => !f.startsWith(".")).map(f => `/uploads/stickers/${f}`);
+    const [files] = await bucket.getFiles({ prefix: "uploads/stickers/" });
+    const urls = files.map(file => `https://storage.googleapis.com/${bucket.name}/${file.name}`);
     res.json(urls);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-api.post("/upload", authenticate, upload.single("file"), (req: any, res) => {
+api.post("/upload", authenticate, upload.single("file"), async (req: any, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     const type = req.body.type || "images";
     const filename = `${Date.now()}_${Math.random().toString(36).substring(7)}${path.extname(req.file.originalname) || '.png'}`;
     
-    const typeDir = path.join(UPLOADS_DIR, type);
-    if (!fs.existsSync(typeDir)) fs.mkdirSync(typeDir, { recursive: true });
+    const filePath = `uploads/${type}/${filename}`;
+    const file = bucket.file(filePath);
     
-    fs.writeFileSync(path.join(typeDir, filename), req.file.buffer);
-    res.json({ url: `/uploads/${type}/${filename}` });
+    await file.save(req.file.buffer, {
+      metadata: { contentType: req.file.mimetype },
+      public: true,
+    });
+
+    const url = `https://storage.googleapis.com/${bucket.name}/${filePath}`;
+    res.json({ url });
   } catch (err: any) {
     console.error("[API/upload] Error:", err);
     res.status(500).json({ error: err.message });
@@ -103,11 +101,18 @@ api.post("/users/profile", authenticate, async (req: any, res) => {
     let photoURL = null;
     if (photoData && photoData.startsWith('data:')) {
       const filename = `avatar_${Date.now()}_${req.user.uid}.png`;
-      const avatarsDir = path.join(UPLOADS_DIR, "avatars");
-      if (!fs.existsSync(avatarsDir)) fs.mkdirSync(avatarsDir, { recursive: true });
       const base64Data = photoData.replace(/^data:image\/\w+;base64,/, "");
-      fs.writeFileSync(path.join(avatarsDir, filename), base64Data, "base64");
-      photoURL = `/uploads/avatars/${filename}`;
+      const buffer = Buffer.from(base64Data, "base64");
+      
+      const filePath = `uploads/avatars/${filename}`;
+      const file = bucket.file(filePath);
+      
+      await file.save(buffer, {
+        metadata: { contentType: "image/png" },
+        public: true,
+      });
+      
+      photoURL = `https://storage.googleapis.com/${bucket.name}/${filePath}`;
     }
     if (displayName) {
       await authAdmin.updateUser(req.user.uid, { displayName });
@@ -124,7 +129,6 @@ api.all("*", (req, res) => {
 });
 
 app.use("/api", api);
-app.use("/uploads", express.static(UPLOADS_DIR));
 
 // Static / Vite
 const isProduction = process.env.NODE_ENV === "production";
