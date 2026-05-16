@@ -37,8 +37,15 @@ const io = new Server(httpServer, {
 });
 
 io.on("connection", (socket) => {
-  socket.on("join", (uid) => socket.join("global"));
+  socket.on("join", (uid) => {
+    socket.join("global");
+    console.log(`[SOCKET] User ${uid} joined global`);
+  });
   socket.on("typing", (data) => io.to("global").emit("userTyping", data));
+  socket.on("updateLastRead", (data) => {
+    // data should be { uid: string, timestamp: number }
+    socket.to("global").emit("lastReadUpdated", data);
+  });
 });
 
 // Multer (Memory for robustness, then write to disk)

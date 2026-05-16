@@ -425,12 +425,17 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     const unsubscribeStatus = onSnapshot(collection(db, 'status'), (snapshot) => {
       let maxOtherRead = 0;
       snapshot.docs.forEach(d => {
-        if (d.id !== user.uid) {
+        // Skip our own status AND skip any stale or special docs
+        // UIDs are generally long (20+ chars)
+        if (d.id !== user.uid && d.id.length > 15) {
           const val = parseInt(d.data().value || "0");
           if (val > maxOtherRead) maxOtherRead = val;
         }
       });
-      setGlobalLastRead(maxOtherRead);
+      // ONLY update if it's actually greater to avoid state loops
+      if (maxOtherRead > 0) {
+        setGlobalLastRead(prev => maxOtherRead > prev ? maxOtherRead : prev);
+      }
     }, (err) => {
       console.error("Status Subscription Error:", err);
       checkQuotaError(err);
@@ -439,8 +444,11 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     // Socket listeners for typing and presence
     socket.connect();
     socket.emit('join', user.uid);
-    socket.on('lastReadUpdated', (timestamp: number) => {
-      setGlobalLastRead(timestamp);
+    socket.on('lastReadUpdated', (data: any) => {
+      // Data expected: { uid: string, timestamp: number }
+      if (data && data.uid !== user.uid) {
+        setGlobalLastRead(prev => data.timestamp > prev ? data.timestamp : prev);
+      }
     });
     socket.on('userTyping', (data: any) => {
       const { uid, userName, isTyping } = data;
@@ -717,6 +725,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
   // Per-user "Seen" logic with optimization (throttled)
   const lastUpdateRef = useRef<number>(0);
+  const lastFirestoreWriteRef = useRef<number>(0);
   const writeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   useEffect(() => {
@@ -725,30 +734,47 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     const performUpdate = async (msgTime: number) => {
       lastUpdateRef.current = msgTime;
       try {
-        await setDoc(doc(db, 'status', user.uid), { value: msgTime.toString() }, { merge: true });
-        socket.emit('updateLastRead', msgTime);
+        // 1. Live notification via Socket (Cheapest, instant)
+        socket.emit('updateLastRead', { uid: user.uid, timestamp: msgTime });
+        
+        // 2. Occasional persistence to Firestore (To handle boros logic)
+        // Only write to Firestore if the change is significant (more than 10s difference)
+        // OR if the user hasn't written in a while.
+        const shouldWriteToFirestore = !lastFirestoreWriteRef.current || (Date.now() - lastFirestoreWriteRef.current > 15000);
+        
+        if (shouldWriteToFirestore) {
+          lastFirestoreWriteRef.current = Date.now();
+          await setDoc(doc(db, 'status', user.uid), { 
+            value: msgTime.toString(),
+            updatedAt: Date.now()
+          }, { merge: true });
+        }
       } catch (err) {
         console.error("Error updating last read:", err);
       }
     };
 
     const updateLastRead = () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible' || messages.length === 0) return;
 
       const lastMsg = messages[messages.length - 1];
       if (!lastMsg.createdAt) return;
 
+      // Optimization: If the last message was sent by us, technically we've already "seen" everything up to that point.
+      // However, we only need to update our status if there's a NEW message from someone else that we've now viewed.
+      // If we are the one who sent the latest, our status is already updated or doesn't need to move to show "seen" to others.
+      // Actually, updating on every message is fine as long as it's throttled.
+      
       const msgTime = typeof lastMsg.createdAt === 'number' 
         ? lastMsg.createdAt 
         : (lastMsg.createdAt.toDate ? lastMsg.createdAt.toDate().getTime() : new Date(lastMsg.createdAt).getTime());
 
       if (msgTime > lastUpdateRef.current) {
-        // Throttle: If we have a pending write, don't start another one immediately
         if (!writeTimeoutRef.current) {
           writeTimeoutRef.current = setTimeout(() => {
             performUpdate(msgTime);
             writeTimeoutRef.current = null;
-          }, 2000); // Only update at most every 2 seconds
+          }, 3000); // Throttled to 3s for better 'boros' management
         }
       }
     };
