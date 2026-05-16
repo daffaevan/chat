@@ -480,39 +480,26 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     setUploadProgress(0);
     
     try {
-      // 1. Convert to base64 for uploadString (or we could use uploadBytes)
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      
-      const base64 = await base64Promise;
-      
-      // 2. Direct Upload to Storage
-      console.log("[STICKER] Uploading directly to storage...");
-      const storagePath = `stickers/${user.uid}_${Date.now()}.png`;
+      console.log("[STICKER] Direct binary upload via uploadBytes...");
+      const storagePath = `stickers/${user.uid}_${Date.now()}_${file.name}`;
       const storageRef = ref(storage, storagePath);
       
-      // Update progress more naturally
       setUploadProgress(20);
       
       try {
-        // Individual timeout for storage upload (15 seconds)
-        const uploadTask = uploadString(storageRef, base64, 'data_url');
+        // Step 1 & 2: Upload binary data directly
+        const uploadTask = uploadBytes(storageRef, file);
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Koneksi upload ke Storage timeout! 💔')), 15000)
+          setTimeout(() => reject(new Error('Koneksi Storage lambat mbull! 💔 Coba ganti koneksi atau pakai file lebih kecil.')), 45000)
         );
 
         setUploadProgress(50);
         await Promise.race([uploadTask, timeoutPromise]);
         
-        setUploadProgress(80);
+        setUploadProgress(85);
         const downloadURL = await getDownloadURL(storageRef);
-        console.log("[STICKER] Direct upload success:", downloadURL);
-
-        // 3. Add to Firestore collection
+        
+        // Step 3: Firestore sync
         await addDoc(collection(db, 'stickers'), {
           url: downloadURL,
           userId: user.uid,
@@ -520,16 +507,15 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         });
 
         setUploadProgress(100);
-        setUploadError(null);
         alert('Sticker berhasil disimpan mbull! 💖');
       } catch (err: any) {
-        console.error("Sticker Direct Upload Error:", err);
+        console.error("Sticker Upload Error:", err);
         setUploadProgress(0);
         
         let errorMsg = "Gagal simpan sticker mbull! 💔";
         if (err.code === 'storage/unauthorized') {
-          errorMsg = "Gagal! Firebase Storage menolak akses. Cek aturan security atau CORS! 🔐";
-        } else if (err.message?.includes('timeout')) {
+          errorMsg = "Gagal! Firebase Storage menolak akses. Cek aturan security! 🔐";
+        } else if (err.message?.includes('timeout') || err.message?.includes('lambat')) {
           errorMsg = err.message;
         } else {
           errorMsg += ` (${err.message || 'Error tidak dikenal'})`;
@@ -537,12 +523,12 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         alert(errorMsg);
       }
     } catch (error: any) {
-      console.error("Sticker Process Error:", error);
-      alert(`Gagal memproses gambar mbull: ${error.message}`);
+      console.error("Sticker process error:", error);
+      alert(`Gagal upload sticker: ${error.message}`);
     } finally {
       if (e.target) e.target.value = '';
       setSending(false);
-      setUploadProgress(0);
+      setTimeout(() => setUploadProgress(0), 1000);
     }
   };
 
