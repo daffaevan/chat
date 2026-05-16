@@ -27,7 +27,7 @@ import {
   Timestamp,
   getDocs
 } from 'firebase/firestore';
-import { ref, uploadString, getDownloadURL } from 'firebase/storage';
+import { ref, uploadString, getDownloadURL, uploadBytes } from 'firebase/storage';
 
 interface Message {
   id: string;
@@ -62,7 +62,7 @@ interface Sticker {
 interface ChatRoomProps {
   user: LocalUser;
   onLogout: () => void;
-  onRefreshUser: () => void;
+  onRefreshUser: () => Promise<LocalUser | null>;
 }
 
 interface TypingUser {
@@ -343,20 +343,19 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const handleSendVoiceNote = async (blob: Blob) => {
     setSending(true);
     try {
-      const formData = new FormData();
-      formData.append('type', 'audio');
-      formData.append('file', blob);
-
-      const idToken = await auth.currentUser?.getIdToken();
-      const { data: uploadData } = await axios.post('/api/upload', formData, {
-        headers: { 
-          'Authorization': `Bearer ${idToken}`
-        }
-      });
+      const storagePath = `audio/${user.uid}_${Date.now()}.webm`;
+      const storageRef = ref(storage, storagePath);
+      
+      console.log("[AUDIO] Uploading directly to storage...");
+      
+      await uploadBytes(storageRef, blob);
+      
+      const downloadURL = await getDownloadURL(storageRef);
+      console.log("[AUDIO] Upload success:", downloadURL);
 
       const messageData = {
         type: 'audio' as const,
-        audioURL: uploadData.url,
+        audioURL: downloadURL,
         audioDuration: recordingDuration,
         senderId: user.uid,
         senderName: user.displayName || 'Anonymous',
@@ -370,7 +369,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     } catch (error: any) {
       console.error("Voice Note Upload Error:", error);
       if (!checkQuotaError(error)) {
-        handleFirestoreError(error, OperationType.CREATE, 'messages');
+        alert("Gagal kirim VN mbull! 💔");
       }
     } finally {
       setSending(false);
@@ -481,37 +480,51 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     setUploadProgress(0);
     
     try {
-      const formData = new FormData();
-      formData.append('type', 'stickers');
-      formData.append('file', file);
+      // 1. Convert to base64 for uploadString (or we could use uploadBytes)
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
       
-      const idToken = await auth.currentUser?.getIdToken();
-      const { data: uploadData } = await axios.post('/api/upload', formData, {
-        headers: { 
-          'Authorization': `Bearer ${idToken}`
-        },
-        onUploadProgress: (progressEvent) => {
-          const progress = progressEvent.total 
-            ? Math.round((progressEvent.loaded * 100) / progressEvent.total) 
-            : 0;
-          setUploadProgress(progress);
-        }
-      });
+      const base64 = await base64Promise;
+      
+      // 2. Direct Upload to Storage
+      console.log("[STICKER] Uploading directly to storage...");
+      const storagePath = `stickers/${user.uid}_${Date.now()}.png`;
+      const storageRef = ref(storage, storagePath);
+      
+      // Add fake progress since uploadString doesn't have native progress tracking in this simple way
+      const progressTimer = setInterval(() => {
+        setUploadProgress(prev => Math.min(prev + 10, 90));
+      }, 200);
+      
+      try {
+        await uploadString(storageRef, base64, 'data_url');
+        clearInterval(progressTimer);
+        setUploadProgress(100);
+        
+        const downloadURL = await getDownloadURL(storageRef);
+        console.log("[STICKER] Direct upload success:", downloadURL);
 
-      await addDoc(collection(db, 'stickers'), {
-        url: uploadData.url,
-        userId: user.uid,
-        createdAt: Date.now()
-      });
+        // 3. Add to Firestore collection
+        await addDoc(collection(db, 'stickers'), {
+          url: downloadURL,
+          userId: user.uid,
+          createdAt: Date.now()
+        });
 
-      setUploadError(null);
-      alert('Sticker berhasil disimpan! 💖');
+        setUploadError(null);
+        alert('Sticker berhasil disimpan mbull! 💖');
+      } catch (err) {
+        clearInterval(progressTimer);
+        throw err;
+      }
     } catch (error: any) {
-      console.error("Sticker Upload Error Detail:", error);
+      console.error("Sticker Direct Upload Error:", error);
       if (!checkQuotaError(error)) {
-        const errorData = error.response?.data;
-        const errorMsg = errorData?.error || errorData?.message || error.message || "Unknown error";
-        alert(`Gagal upload: ${typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg}`);
+        alert(`Gagal simpan sticker mbull: ${error.message || 'Cek koneksi internet ya?'}`);
       }
     } finally {
       if (e.target) e.target.value = '';
@@ -1028,12 +1041,22 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
       // 4. Refresh and Close
       console.log("[PROFILE] Refreshing local user state...");
-      await onRefreshUser();
+      const refreshedUser = await onRefreshUser() as any;
+      
+      // If we got refreshed data back, we can manually trigger any local updates if needed,
+      // though the prop change should handle most of it.
+      if (refreshedUser) {
+        console.log("[PROFILE] Local state updated with refreshed data:", refreshedUser.displayName);
+      }
       
       clearTimeout(masterTimeoutId);
       setUpdatingProfile(false);
       setShowProfile(false);
-      alert('Profil berhasil diperbarui mbull! ✨');
+      
+      // Use a timeout for alert to let the UI finish updating state first
+      setTimeout(() => {
+        alert('Profil berhasil diperbarui mbull! ✨');
+      }, 100);
       
     } catch (error: any) {
       console.error('[PROFILE] Fatal error during save:', error);
@@ -1118,16 +1141,22 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                   <span className="text-[7px] font-black uppercase italic text-pink-deep">{sending ? 'Wait...' : 'UPLOAD'}</span>
                 </button>
 
-                {allStickers.map((sticker) => (
-                  <div key={sticker.id} className="relative group">
+                {allStickers.map((sticker, idx) => (
+                  <motion.div 
+                    key={sticker.id} 
+                    className="relative group"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: idx * 0.05 }}
+                  >
                     <button 
                       type="button"
                       onClick={() => sendSticker(sticker.url)}
-                      className="w-full aspect-square bg-pink-soft rounded-2xl p-2 hover:scale-105 transition-transform flex items-center justify-center border-2 border-transparent hover:border-pink-medium"
+                      className="w-full aspect-square bg-pink-soft rounded-2xl p-2 hover:scale-105 transition-transform flex items-center justify-center border-2 border-transparent hover:border-pink-medium shadow-sm hover:shadow-md"
                     >
                       <img src={getFullUrl(sticker.url)} alt="sticker" className="w-full h-full object-contain" />
                     </button>
-                  </div>
+                  </motion.div>
                 ))}
                 
                 {myStickers.length === 0 && !sending && (
