@@ -9,6 +9,7 @@ import { format } from 'date-fns';
 import { getCroppedImg } from '../lib/imageUtils';
 import { VirtualKeyboard } from './VirtualKeyboard';
 import { db, auth, storage, handleFirestoreError, OperationType } from '../lib/firebase';
+import firebaseConfig from '../../firebase-applet-config.json';
 import { 
   collection, 
   query, 
@@ -343,19 +344,24 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const handleSendVoiceNote = async (blob: Blob) => {
     setSending(true);
     try {
-      const storagePath = `audio/${user.uid}_${Date.now()}.webm`;
-      const storageRef = ref(storage, storagePath);
+      console.log("[AUDIO] Uploading via API proxy...");
+      const formData = new FormData();
+      formData.append('type', 'audio');
+      formData.append('file', blob, 'voice_note.webm');
+
+      const idToken = await auth.currentUser?.getIdToken();
+      const { data: uploadData } = await axios.post('/api/upload', formData, {
+        headers: { 
+          'Authorization': `Bearer ${idToken}`,
+          'Content-Type': 'multipart/form-data'
+        }
+      });
       
-      console.log("[AUDIO] Uploading directly to storage...");
-      
-      await uploadBytes(storageRef, blob);
-      
-      const downloadURL = await getDownloadURL(storageRef);
-      console.log("[AUDIO] Upload success:", downloadURL);
+      console.log("[AUDIO] API Proxy Upload success:", uploadData.url);
 
       const messageData = {
         type: 'audio' as const,
-        audioURL: downloadURL,
+        audioURL: uploadData.url,
         audioDuration: recordingDuration,
         senderId: user.uid,
         senderName: user.displayName || 'Anonymous',
@@ -368,11 +374,10 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       await addDoc(collection(db, 'messages'), messageData);
     } catch (error: any) {
       console.error("Voice Note Upload Error:", error);
-      if (!checkQuotaError(error)) {
-        alert("Gagal kirim VN mbull! 💔");
-      }
+      alert("Gagal kirim VN mbull! 💔 Mungkin karena file kegedean atau koneksi lagi bapuk. Coba VN yang lebih pendek ya?");
     } finally {
       setSending(false);
+      setRecordingDuration(0);
     }
   };
 
@@ -392,8 +397,10 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
     // 2. Subscribe to Stickers
     // Remove orderBy to avoid composite index requirement
+    console.log(`[STICKERS] Initializing sub for UID: ${user.uid} on project: ${firebaseConfig.projectId}`);
     const sq = query(collection(db, 'stickers'), where('userId', '==', user.uid));
     const unsubscribeStickers = onSnapshot(sq, (snapshot) => {
+      console.log(`[STICKERS] Received snapshot with ${snapshot.docs.length} stickers.`);
       const stickers = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
@@ -471,8 +478,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     const file = e.target.files?.[0];
     if (!file || !user) return;
     
-    if (file.size > 2 * 1024 * 1024) {
-      alert('Sticker kegedean mbull! Maksimal 2MB yaa biar nggak berat ✨');
+    if (file.size > 4 * 1024 * 1024) {
+      alert('Sticker kegedean mbull! Maksimal 4MB yaa biar Vercel nggak ngambek ✨');
       return;
     }
     
@@ -480,51 +487,41 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     setUploadProgress(0);
     
     try {
-      console.log("[STICKER] Direct binary upload via uploadBytes...");
-      const storagePath = `stickers/${user.uid}_${Date.now()}_${file.name}`;
-      const storageRef = ref(storage, storagePath);
+      console.log("[STICKER] Uploading via API proxy...");
+      const formData = new FormData();
+      formData.append('type', 'stickers');
+      formData.append('file', file);
       
-      setUploadProgress(20);
+      const idToken = await auth.currentUser?.getIdToken();
       
-      try {
-        // Step 1 & 2: Upload binary data directly
-        const uploadTask = uploadBytes(storageRef, file);
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Koneksi Storage lambat mbull! 💔 Coba ganti koneksi atau pakai file lebih kecil.')), 45000)
-        );
-
-        setUploadProgress(50);
-        await Promise.race([uploadTask, timeoutPromise]);
-        
-        setUploadProgress(85);
-        const downloadURL = await getDownloadURL(storageRef);
-        
-        // Step 3: Firestore sync
-        await addDoc(collection(db, 'stickers'), {
-          url: downloadURL,
-          userId: user.uid,
-          createdAt: Date.now()
-        });
-
-        setUploadProgress(100);
-        alert('Sticker berhasil disimpan mbull! 💖');
-      } catch (err: any) {
-        console.error("Sticker Upload Error:", err);
-        setUploadProgress(0);
-        
-        let errorMsg = "Gagal simpan sticker mbull! 💔";
-        if (err.code === 'storage/unauthorized') {
-          errorMsg = "Gagal! Firebase Storage menolak akses. Cek aturan security! 🔐";
-        } else if (err.message?.includes('timeout') || err.message?.includes('lambat')) {
-          errorMsg = err.message;
-        } else {
-          errorMsg += ` (${err.message || 'Error tidak dikenal'})`;
+      // Axios native upload progress tracking
+      const { data: uploadData } = await axios.post('/api/upload', formData, {
+        headers: { 
+          'Authorization': `Bearer ${idToken}`,
+          'Content-Type': 'multipart/form-data'
+        },
+        onUploadProgress: (progressEvent) => {
+          const percent = progressEvent.total ? Math.round((progressEvent.loaded * 100) / progressEvent.total) : 0;
+          setUploadProgress(percent);
         }
-        alert(errorMsg);
-      }
+      });
+
+      setUploadProgress(95); // Final processing
+      console.log("[STICKER] API Proxy Upload success:", uploadData.url);
+
+      await addDoc(collection(db, 'stickers'), {
+        url: uploadData.url,
+        userId: user.uid,
+        createdAt: Date.now()
+      });
+
+      setUploadProgress(100);
+      alert('Sticker berhasil disimpan mbull! 💖');
     } catch (error: any) {
-      console.error("Sticker process error:", error);
-      alert(`Gagal upload sticker: ${error.message}`);
+      console.error("Sticker Upload Error:", error);
+      setUploadProgress(0);
+      const errorMsg = error.response?.data?.error || error.message || 'Error tidak dikenal';
+      alert(`Gagal simpan sticker mbull: ${errorMsg} 💔`);
     } finally {
       if (e.target) e.target.value = '';
       setSending(false);
