@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Send, LogOut, Heart, Sparkles, Reply, X, User as UserIcon, Camera, Check, Mic, Square, Trash2, Play, Pause, Smile } from 'lucide-react';
 import { LocalUser } from '../hooks/useAuth';
 import { format } from 'date-fns';
-import { getCroppedImg } from '../lib/imageUtils';
+import { getCroppedImg, compressImage } from '../lib/imageUtils';
 import { VirtualKeyboard } from './VirtualKeyboard';
 import { db, auth, storage, handleFirestoreError, OperationType } from '../lib/firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -344,24 +344,25 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const handleSendVoiceNote = async (blob: Blob) => {
     setSending(true);
     try {
-      console.log("[AUDIO] Starting direct resumable upload...");
-      const storagePath = `audio/${user.uid}_${Date.now()}.webm`;
-      const storageRef = ref(storage, storagePath);
-      
-      const { uploadBytesResumable, getDownloadURL } = await import('firebase/storage');
-      const uploadTask = uploadBytesResumable(storageRef, blob);
-
-      // Wait for upload to complete
-      await new Promise<void>((resolve, reject) => {
-        uploadTask.on('state_changed', null, reject, () => resolve());
+      console.log("[AUDIO] Converting to base64 for Firestore storage...");
+      // Convert blob to base64 to store directly in Firestore (bypass Storage issues)
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
       });
-
-      const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-      console.log("[AUDIO] Upload success:", downloadURL);
+      
+      const base64 = await base64Promise;
+      
+      // Limit base64 size for Firestore (1MB limit)
+      if (base64.length > 1000000) {
+        throw new Error("VN kepanjangan mbull! Maksimal 15-20 detik aja yaa ❤️");
+      }
 
       const messageData = {
         type: 'audio' as const,
-        audioURL: downloadURL,
+        audioURL: base64, // Storing base64 directly
         audioDuration: recordingDuration,
         senderId: user.uid,
         senderName: user.displayName || 'Anonymous',
@@ -372,9 +373,10 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       };
 
       await addDoc(collection(db, 'messages'), messageData);
+      console.log("[AUDIO] Saved to Firestore success.");
     } catch (error: any) {
-      console.error("Voice Note Upload Error:", error);
-      alert("Gagal kirim VN mbull! 💔 Coba cek koneksi internet ya?");
+      console.error("Voice Note Process Error:", error);
+      alert(error.message || "Gagal kirim VN mbull! 💔 Mungkin karena kepanjangan atau koneksi bapuk.");
     } finally {
       setSending(false);
       setRecordingDuration(0);
@@ -397,14 +399,16 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
     // 2. Subscribe to Stickers
     // Remove orderBy to avoid composite index requirement
-    console.log(`[STICKERS] Initializing sub for UID: ${user.uid} on project: ${firebaseConfig.projectId}`);
-    const sq = query(collection(db, 'stickers'), where('userId', '==', user.uid));
-    const unsubscribeStickers = onSnapshot(sq, (snapshot) => {
-      console.log(`[STICKERS] Received snapshot with ${snapshot.docs.length} stickers.`);
-      const stickers = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Sticker[];
+      console.log(`[STICKERS] Initializing sub for UID: "${user.uid}"`);
+      const stickersRef = collection(db, 'stickers');
+      const sq = query(stickersRef, where('userId', '==', user.uid));
+      
+      const unsubscribeStickers = onSnapshot(sq, (snapshot) => {
+        console.log(`[STICKERS] Received snapshot. Count: ${snapshot.docs.length}`);
+        const stickers = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Sticker[];
       // Sort in JS
       const sortedStickers = [...stickers].sort((a, b) => {
         const timeA = a.createdAt || 0;
@@ -478,70 +482,37 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     const file = e.target.files?.[0];
     if (!file || !user) return;
     
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Sticker kegedean mbull! Maksimal 5MB yaa biar lancar ✨');
-      return;
-    }
-    
     setSending(true);
-    setUploadProgress(0);
+    setUploadProgress(10);
     
     try {
-      // 1. Direct Upload to Firebase Storage (Standard & Reliable for Vercel)
-      const storagePath = `stickers/${user.uid}_${Date.now()}_${file.name}`;
-      const storageRef = ref(storage, storagePath);
+      console.log("[STICKER] Compressing sticker for Firestore storage...");
+      // 1. Compress image to be small enough for Firestore (usually < 200kb)
+      const compressedBase64 = await compressImage(file, 400, 0.7);
+      setUploadProgress(60);
       
-      const { uploadBytesResumable, getDownloadURL } = await import('firebase/storage');
-      const uploadTask = uploadBytesResumable(storageRef, file);
+      if (compressedBase64.length > 900000) {
+        throw new Error("Gambar masih kegedean mbull! 💔 Coba file lain ya?");
+      }
 
-      console.log("[STICKER] Starting direct resumable upload...");
+      // 2. Save directly to Firestore (Bypassing Storage entirely)
+      console.log("[STICKER] Saving directly to Firestore...");
+      await addDoc(collection(db, 'stickers'), {
+        url: compressedBase64,
+        userId: user.uid,
+        createdAt: Date.now()
+      });
 
-      // 2. Track real progress
-      uploadTask.on('state_changed', 
-        (snapshot) => {
-          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          setUploadProgress(Math.round(progress));
-          console.log(`[STICKER] Progress: ${Math.round(progress)}%`);
-        }, 
-        (error) => {
-          console.error("[STICKER] Upload Task Error:", error);
-          setSending(false);
-          setUploadProgress(0);
-          
-          let friendlyMsg = "Gagal upload sticker mbull! 💔";
-          if (error.code === 'storage/unauthorized') {
-            friendlyMsg += "\n\nFirebase Storage menolak akses. Pastikan Security Rules sudah di-set ke 'allow write' untuk user tersertifikasi.";
-          } else if (error.code === 'storage/canceled') {
-            friendlyMsg = "Upload dibatalkan.";
-          } else {
-            friendlyMsg += ` (${error.message})`;
-          }
-          alert(friendlyMsg);
-        }, 
-        async () => {
-          // 3. Success
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          console.log("[STICKER] Upload complete! Download URL:", downloadURL);
-
-          // 4. Record to Firestore
-          await addDoc(collection(db, 'stickers'), {
-            url: downloadURL,
-            userId: user.uid,
-            createdAt: Date.now()
-          });
-
-          setUploadProgress(100);
-          alert('Sticker berhasil disimpan mbull! 💖');
-          setSending(false);
-          setTimeout(() => setUploadProgress(0), 1000);
-        }
-      );
+      setUploadProgress(100);
+      alert('Sticker berhasil disimpan mbull! 💖');
     } catch (error: any) {
-      console.error("Sticker Process Error:", error);
-      alert(`Gagal memproses sticker: ${error.message || 'Unknown error'}`);
-      setSending(false);
+      console.error("Sticker Upload Error:", error);
       setUploadProgress(0);
+      const errorMsg = error.message || 'Error tidak dikenal';
+      alert(`Gagal simpan sticker mbull: ${errorMsg} 💔`);
     } finally {
+      setUploadProgress(0);
+      setSending(false);
       if (e.target) e.target.value = '';
     }
   };
