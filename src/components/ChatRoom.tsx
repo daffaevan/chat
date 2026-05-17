@@ -527,23 +527,28 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   useEffect(() => {
     if (messages.length === 0 || !user) return;
     
-    const latestMsg = messages[messages.length - 1];
-    
-    // Check if this is truly a new message we haven't processed
-    if (latestMsg.id !== lastMessageIdRef.current) {
-      const isNewMessage = lastMessageIdRef.current !== null;
-      lastMessageIdRef.current = latestMsg.id;
+      const latestMsg = messages[messages.length - 1];
       
-      // Check message freshness (within last 2 minutes)
-      const isFresh = latestMsg.createdAt ? (Date.now() - latestMsg.createdAt < 120000) : true;
-      
-      // Only notify if:
-      // 1. It's a new message (not just the initial load)
-      // 2. It's NOT from us
-      // 3. The tab is hidden/backgrounded
-      // 4. The message is fresh
-      if (isNewMessage && isFresh && latestMsg.senderId !== user.uid && (document.hidden || document.visibilityState !== 'visible')) {
-        if (Notification.permission === 'granted') {
+      // Check if this is truly a new message we haven't processed
+      if (latestMsg.id !== lastMessageIdRef.current) {
+        const isNewMessage = lastMessageIdRef.current !== null;
+        lastMessageIdRef.current = latestMsg.id;
+        
+        // Use the helper to get numeric timestamp
+        const msgTime = getTimestamp(latestMsg.createdAt);
+        // Check message freshness (within last 3 minutes)
+        // If msgTime is 0 (missing timestamp), we assume it's fresh enough
+        const isFresh = msgTime ? (Date.now() - msgTime < 180000) : true;
+        
+        // Only notify if:
+        // 1. It's a new message (not just the initial load)
+        // 2. It's NOT from us
+        // 3. The tab is hidden/backgrounded
+        // 4. The message is fresh
+        const isBackgrounded = document.hidden || document.visibilityState !== 'visible';
+        
+        if (isNewMessage && isFresh && latestMsg.senderId !== user.uid && isBackgrounded) {
+          if (Notification.permission === 'granted') {
           const title = `Pesan baru dari ${latestMsg.senderName}`;
           let body = '';
           
@@ -558,8 +563,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
             body: body,
             icon: getFullUrl(latestMsg.senderPhoto) || '/logo192.png',
             badge: '/logo192.png',
-            tag: `chat-msg-${latestMsg.senderId}`, // Group by sender to ensure multiple senders stack, but same sender refreshes
-            renotify: true, // Pulse/vibrate again for the same tag
+            tag: `chat-msg-${latestMsg.senderId}-${Date.now()}`, // Highly unique tag to ensure it always pops up as a new alert
+            renotify: true,
             vibrate: [200, 100, 200],
             data: { url: window.location.origin }
           };
