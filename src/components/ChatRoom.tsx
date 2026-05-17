@@ -3,7 +3,7 @@ import axios from 'axios';
 import socket from '../lib/socket';
 import Cropper from 'react-easy-crop';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, LogOut, Heart, Sparkles, Reply, X, User as UserIcon, Camera, Check, Mic, Square, Trash2, Play, Pause, Smile, ArrowDown } from 'lucide-react';
+import { Send, LogOut, Heart, Sparkles, Reply, X, User as UserIcon, Camera, Check, Mic, Square, Trash2, Play, Pause, Smile, ArrowDown, Smartphone } from 'lucide-react';
 import { LocalUser } from '../hooks/useAuth';
 import { format } from 'date-fns';
 import { getCroppedImg, compressImage } from '../lib/imageUtils';
@@ -221,6 +221,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [selectedUserProfile, setSelectedUserProfile] = useState<{ name: string, photo: string | null } | null>(null);
   const [showProfile, setShowProfile] = useState(false);
+  const [showPWAHelp, setShowPWAHelp] = useState(false);
   const [profileName, setProfileName] = useState(user.displayName || '');
   const [profilePhoto, setProfilePhoto] = useState(getFullUrl(user.photoURL) || '');
   const [updatingProfile, setUpdatingProfile] = useState(false);
@@ -1976,6 +1977,15 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                   
                   <button 
                     type="button"
+                    onClick={() => setShowPWAHelp(true)}
+                    className="w-full py-3 bg-pink-deep text-white rounded-2xl text-xs font-bold uppercase tracking-widest hover:bg-ink transition-all active:opacity-80 flex items-center justify-center gap-2 shadow-pink"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    Install as App
+                  </button>
+
+                  <button 
+                    type="button"
                     onClick={requestNotificationPermission}
                     className="w-full py-3 bg-white border-2 border-pink-medium text-pink-deep rounded-2xl text-xs font-bold uppercase tracking-widest hover:bg-pink-soft transition-all active:opacity-80 flex items-center justify-center gap-2"
                   >
@@ -2049,6 +2059,59 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                 />
               </div>
             </div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* PWA Help Modal */}
+      <AnimatePresence>
+        {showPWAHelp && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="w-full max-w-sm bg-white rounded-[40px] shadow-2xl overflow-hidden border-4 border-pink-soft"
+            >
+              <div className="p-8">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-2xl font-black italic text-pink-deep tracking-tighter">INSTALL MBULL APP 🎀</h3>
+                  <button onClick={() => setShowPWAHelp(false)} className="p-2 bg-pink-soft rounded-full text-pink-deep">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                
+                <div className="space-y-6">
+                  <div className="p-4 bg-pink-soft/30 rounded-2xl border border-pink-soft">
+                    <p className="text-xs font-bold text-pink-deep mb-3 flex items-center gap-2">
+                       📱 UNTUK IPHONE (iOS):
+                    </p>
+                    <ol className="text-[10px] space-y-2 text-ink/70 font-medium list-decimal ml-4">
+                      <li>Klik tombol <span className="font-bold">Share</span> (kotak dengan panah ke atas) di browser Safari</li>
+                      <li>Scroll ke bawah dan pilih <span className="font-bold">"Add to Home Screen"</span></li>
+                      <li>Klik <span className="font-bold">"Add"</span> di pojok kanan atas</li>
+                    </ol>
+                  </div>
+
+                  <div className="p-4 bg-pink-soft/30 rounded-2xl border border-pink-soft">
+                    <p className="text-xs font-bold text-pink-deep mb-3 flex items-center gap-2">
+                       🤖 UNTUK ANDROID:
+                    </p>
+                    <ol className="text-[10px] space-y-2 text-ink/70 font-medium list-decimal ml-4">
+                      <li>Klik tombol <span className="font-bold">Tiga Titik</span> di pojok kanan atas Chrome</li>
+                      <li>Pilih menu <span className="font-bold">"Install App"</span> atau <span className="font-bold">"Add to Home Screen"</span></li>
+                      <li>Konfirmasi instalasi</li>
+                    </ol>
+                  </div>
+
+                  <div className="bg-pink-deep/10 p-4 rounded-2xl border border-pink-deep/20">
+                    <p className="text-[9px] font-bold text-pink-deep italic text-center leading-relaxed">
+                      "Instal sebagai aplikasi agar notifikasi chat muncul lebih cepat dan aplikasi lebih lancar mbull! ✨"
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
           </div>
         )}
       </AnimatePresence>
