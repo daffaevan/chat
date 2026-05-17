@@ -134,14 +134,25 @@ const AudioPlayer = ({ url, duration }: { url: string, duration?: number }) => {
   const [progress, setProgress] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
+      try {
+        if (isPlaying) {
+          audioRef.current.pause();
+          setIsPlaying(false);
+        } else {
+          // On mobile, sometimes we need to re-load if the source changed or was stale
+          if (audioRef.current.readyState === 0) {
+             audioRef.current.load();
+          }
+          await audioRef.current.play();
+          setIsPlaying(true);
+        }
+      } catch (err) {
+        console.error("Playback error:", err);
+        // Basic fallback
+        setIsPlaying(false);
       }
-      setIsPlaying(!isPlaying);
     }
   };
 
@@ -189,6 +200,7 @@ const AudioPlayer = ({ url, duration }: { url: string, duration?: number }) => {
       <audio 
         ref={audioRef} 
         src={url} 
+        preload="metadata"
         onTimeUpdate={onTimeUpdate} 
         onEnded={onEnded}
         onPlay={() => setIsPlaying(true)}
@@ -221,6 +233,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const [globalLastRead, setGlobalLastRead] = useState<number>(0);
   const [myStickers, setMyStickers] = useState<Sticker[]>([]);
   
+  const [selectedStickerForAction, setSelectedStickerForAction] = useState<string | null>(null);
+
   const allStickers = useMemo(() => {
     return [...myStickers];
   }, [myStickers]);
@@ -290,7 +304,26 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      
+      // Select the best supported MIME type
+      let mimeType = '';
+      const types = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4',
+        'audio/aac'
+      ];
+      
+      for (const type of types) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          break;
+        }
+      }
+
+      console.log(`[AUDIO] Selected MIME type: ${mimeType || 'default'}`);
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       audioChunksRef.current = [];
 
       recorder.ondataavailable = (e) => {
@@ -300,14 +333,15 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       };
 
       recorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        if (audioBlob.size > 100) { // Check if it's not and empty file
+        // Use the actual recorder's mimeType for the blob
+        const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType });
+        if (audioBlob.size > 100) { // Check if it's not an empty file
            await handleSendVoiceNote(audioBlob);
         }
         stream.getTracks().forEach(track => track.stop());
       };
 
-      recorder.start();
+      recorder.start(1000); // Collect data chunks every second for better mobile compatibility
       setMediaRecorder(recorder);
       setIsRecording(true);
       setRecordingDuration(0);
@@ -382,124 +416,84 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   };
 
   useEffect(() => {
-    // 1. Subscribe to Messages
-    const q = query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(50));
+    // 1. Subscribe to Messages - Reduced limit for better performance
+    const q = query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(30));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
       const newMessages = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as any[];
+      // Only update if data changed or it's the first load
       setMessages(newMessages.reverse());
     }, (err) => {
       console.error("Messages Subscription Error:", err);
       checkQuotaError(err);
     });
 
-    // 2. Subscribe to Stickers
-    // Remove orderBy to avoid composite index requirement
-      console.log(`[STICKERS] Initializing sub for UID: "${user.uid}"`);
-      const stickersRef = collection(db, 'stickers');
-      const sq = query(stickersRef, where('userId', '==', user.uid));
-      
-      const unsubscribeStickers = onSnapshot(sq, (snapshot) => {
-        console.log(`[STICKERS] Received snapshot. Count: ${snapshot.docs.length}`);
-        const stickers = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as Sticker[];
-      // Sort in JS
-      const sortedStickers = [...stickers].sort((a, b) => {
-        const timeA = a.createdAt || 0;
-        const timeB = b.createdAt || 0;
-        return timeB - timeA;
+    // 2. Subscribe to Stickers - Static fetching of stickers is better than onSnapshot for reads
+    // if we don't expect other people to add stickers to OUR collection.
+    // However, if we keep onSnapshot, we must ensure it doesn't re-run.
+    const stickersRef = collection(db, 'stickers');
+    const sq = query(stickersRef, where('userId', '==', user.uid));
+    
+    const unsubscribeStickers = onSnapshot(sq, (snapshot) => {
+      const stickers = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Sticker[];
+      const sortedStickers = [...stickers].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setMyStickers(prev => {
+        // Simple comparison to prevent excessive re-renders if nothing changed
+        if (prev.length === sortedStickers.length && prev.every((s, i) => s.id === sortedStickers[i].id)) return prev;
+        return sortedStickers;
       });
-      setMyStickers(sortedStickers);
     }, (err) => {
       console.error("Stickers Subscription Error:", err);
       checkQuotaError(err);
     });
 
-    // 3. Subscribe to App Status (Last Read) - Optimized
-    // We only need to listen to the people we are actually chatting with.
-    // Since this is a small private project, we'll try to find the "other" person.
-    
+    // 3. Optimized Status Logic
     const activeListeners = new Map<string, () => void>();
-
     const setupStatusListener = (targetUid: string) => {
-      if (targetUid === user.uid || activeListeners.has(targetUid)) return;
+      if (!targetUid || targetUid === user.uid || activeListeners.has(targetUid)) return;
       
-      console.log(`[STATUS] Setting up targeted listener for: ${targetUid}`);
       const unsub = onSnapshot(doc(db, 'status', targetUid), (docSnap) => {
         if (docSnap.exists()) {
           const val = parseInt(docSnap.data().value || "0");
-          if (val > 0) {
-            setGlobalLastRead(prev => {
-              if (val > prev) {
-                console.log(`[STATUS] Updated globalLastRead from targeted doc ${targetUid}: ${val}`);
-                return val;
-              }
-              return prev;
-            });
-          }
-        }
-      }, (err) => {
-        console.error(`Status Subscription Error for ${targetUid}:`, err);
-        checkQuotaError(err);
-      });
-      
-      activeListeners.set(targetUid, unsub);
-    };
-
-    // Initially, try to find the other person from the current messages
-    const otherSenders = new Set(messages.map(m => m.senderId).filter(id => id !== user.uid));
-    otherSenders.forEach(setupStatusListener);
-
-    // Also, as a fallback for the very first time or different rooms, 
-    // we can listen to the last 2 people who were active in status
-    const recentStatusQuery = query(
-      collection(db, 'status'), 
-      orderBy('updatedAt', 'desc'), 
-      limit(5)
-    );
-
-    const unsubscribeStatus = onSnapshot(recentStatusQuery, (snapshot) => {
-      snapshot.docs.forEach(d => {
-        if (d.id !== user.uid) {
-          setupStatusListener(d.id);
-          
-          // Also update immediately from this snapshot
-          const val = parseInt(d.data().value || "0");
           if (val > 0) {
             setGlobalLastRead(prev => val > prev ? val : prev);
           }
         }
       });
-    }, (err) => {
-      console.error("Recent Status Subscription Error:", err);
-      // If we hit index errors, fallback to just using message-based listeners
+      activeListeners.set(targetUid, unsub);
+    };
+
+    // Use a single query for general presence instead of many docs if possible
+    const recentStatusQuery = query(
+      collection(db, 'status'), 
+      orderBy('updatedAt', 'desc'), 
+      limit(3) // Only listen to top 3 active
+    );
+
+    const unsubscribeStatus = onSnapshot(recentStatusQuery, (snapshot) => {
+      snapshot.docs.forEach(d => {
+        if (d.id !== user.uid) {
+          // Update immediately
+          const val = parseInt(d.data().value || "0");
+          if (val > 0) setGlobalLastRead(prev => val > prev ? val : prev);
+          // Also set up Doc level listener for real-time updates of this specific user
+          setupStatusListener(d.id);
+        }
+      });
     });
 
-    // Socket listeners for typing and presence
+    // Socket listeners
     socket.connect();
     socket.emit('join', user.uid);
     socket.on('lastReadUpdated', (data: any) => {
-      // Data expected: { uid: string, timestamp: number }
       if (data && data.uid !== user.uid) {
-        console.log(`[SOCKET] Received lastReadUpdated from ${data.uid}: ${data.timestamp}`);
         setGlobalLastRead(prev => data.timestamp > prev ? data.timestamp : prev);
       }
-    });
-    socket.on('userTyping', (data: any) => {
-      const { uid, userName, isTyping } = data;
-      if (uid === user.uid) return;
-      
-      setTypingUsers(prev => {
-        const filtered = prev.filter(u => u.id !== uid);
-        if (isTyping) {
-          return [...filtered, { id: uid, userName, isTyping: true, updatedAt: Date.now() }];
-        }
-        return filtered;
-      });
     });
 
     return () => {
@@ -509,10 +503,9 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       activeListeners.forEach(unsub => unsub());
       activeListeners.clear();
       socket.off('lastReadUpdated');
-      socket.off('userTyping');
       socket.disconnect();
     };
-  }, [user.uid, user.displayName, messages.length === 0]); // only re-run if we go from 0 to messages or vice versa
+  }, [user.uid]); // Minimal dependencies
 
   // Helper to reliably get a numeric timestamp from various formats
   const getTimestamp = (val: any): number => {
@@ -1315,7 +1308,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
            <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
                 <Heart className="w-5 h-5 text-pink-deep fill-pink-deep animate-pulse" />
-                <h2 className="text-xl font-bold italic tracking-tighter text-ink">I LOVEE U MBULLL</h2>
+                <h2 className="text-xl font-bold italic tracking-tighter text-ink">MBULLL</h2>
               </div>
 
               {notificationPermission === 'default' && (
@@ -1534,7 +1527,10 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                         {msg.type === 'audio' ? (
                           <AudioPlayer url={getFullUrl(msg.audioURL!)} duration={msg.audioDuration} />
                         ) : msg.type === 'sticker' ? (
-                          <div className="relative group">
+                          <div 
+                            className="relative group"
+                            onClick={() => setSelectedStickerForAction(msg.stickerUrl!)}
+                          >
                             <motion.img 
                               src={getFullUrl(msg.stickerUrl!)} 
                               alt="sticker" 
@@ -1543,14 +1539,6 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                               animate={{ scale: 1, opacity: 1 }}
                               whileHover={{ scale: 1.1 }}
                             />
-                            {/* Save sticker button */}
-                            <button 
-                              onClick={() => saveSticker(msg.stickerUrl!)}
-                              className="absolute -right-2 -bottom-2 bg-white rounded-full p-1.5 shadow-sm border border-pink-medium text-pink-deep opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
-                              title="Save to collection"
-                            >
-                              <Heart className="w-3 h-3 fill-current" />
-                            </button>
                           </div>
                         ) : (
                           <>
@@ -1761,6 +1749,61 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
           className="hidden" 
         />
       </main>
+
+      {/* Sticker Action Bottom Sheet */}
+      <AnimatePresence>
+        {selectedStickerForAction && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedStickerForAction(null)}
+              className="fixed inset-0 bg-black/40 z-[100] backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="fixed bottom-0 left-0 right-0 z-[101] bg-white rounded-t-3xl border-t-2 border-pink-medium p-6 shadow-2xl safe-area-bottom"
+            >
+              <div className="w-12 h-1.5 bg-pink-medium rounded-full mx-auto mb-6 opacity-40 hover:opacity-100 transition-opacity" onClick={() => setSelectedStickerForAction(null)} />
+              
+              <div className="flex flex-col items-center mb-6">
+                <div className="w-32 h-32 bg-pink-soft rounded-2xl flex items-center justify-center p-4 mb-4 border-2 border-pink-medium">
+                  <img 
+                    src={getFullUrl(selectedStickerForAction)} 
+                    alt="Select Sticker" 
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+                <p className="text-[10px] font-black italic text-pink-deep uppercase tracking-[0.2em]">Opsi Sticker Mbull</p>
+              </div>
+
+              <div className="space-y-3">
+                <button
+                  onClick={() => {
+                    saveSticker(selectedStickerForAction);
+                    setSelectedStickerForAction(null);
+                  }}
+                  className="w-full p-5 bg-pink-soft text-pink-deep rounded-2xl flex items-center justify-center gap-3 hover:bg-pink-medium transition-all active:scale-[0.98] border-2 border-pink-medium"
+                >
+                  <Heart className="w-6 h-6 fill-current" />
+                  <span className="text-sm font-black italic uppercase tracking-wider">Simpan Sticker ❤️</span>
+                </button>
+                
+                <button
+                  onClick={() => setSelectedStickerForAction(null)}
+                  className="w-full p-4 text-pink-bold text-xs font-black italic uppercase tracking-widest hover:opacity-70 transition-opacity"
+                >
+                  Batal
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Other User Profile Popup */}
       <AnimatePresence>
