@@ -57,10 +57,13 @@ export function useAuth() {
               lastSeen: profileData.lastSeen
             });
 
-            // Update last seen (non-blocking)
-            updateDoc(doc(db, 'profiles', fbUser.uid), {
-              lastSeen: Date.now()
-            }).catch(e => console.warn("Failed to update last seen:", e));
+            // Update last seen (non-blocking, throttled to once per 15 mins)
+            const now = Date.now();
+            if (!profileData.lastSeen || now - profileData.lastSeen > 900000) {
+              updateDoc(doc(db, 'profiles', fbUser.uid), {
+                lastSeen: now
+              }).catch(e => console.warn("Failed to update last seen:", e));
+            }
           } else {
             console.log("[AUTH] Profile not found in Firestore, using Auth fallback");
             const username = fbUser.email?.split('@')[0] || fbUser.displayName?.replace(/\s+/g, '').toLowerCase() || 'user';

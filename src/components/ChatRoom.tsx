@@ -434,8 +434,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   };
 
   useEffect(() => {
-    // 1. Subscribe to Messages - Increased limit slightly for better reply history
-    const q = query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(50));
+    // 1. Subscribe to Messages - Reduced limit to save reads in global chat
+    const q = query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(25));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
       const newMessages = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -448,9 +448,9 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       checkQuotaError(err);
     });
 
-    // 2. Subscribe to Stickers
+    // 2. Subscribe to Stickers - Limited to 20 items
     const stickersRef = collection(db, 'stickers');
-    const sq = query(stickersRef, where('userId', '==', user.uid));
+    const sq = query(stickersRef, where('userId', '==', user.uid), orderBy('createdAt', 'desc'), limit(20));
     
     const unsubscribeStickers = onSnapshot(sq, (snapshot) => {
       const stickers = snapshot.docs.map(doc => ({
@@ -946,6 +946,13 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     e.preventDefault();
     if (!newMessage.trim() || sending) return;
 
+    // Local anti-spam to save database reads/writes
+    const now = Date.now();
+    if (lastUpdateRef.current && now - lastUpdateRef.current < 1000) {
+      return; 
+    }
+    lastUpdateRef.current = now;
+
     setSending(true);
     try {
       const messageData = {
@@ -1254,9 +1261,21 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     <div className="fixed inset-0 flex flex-col bg-pink-soft md:static md:flex-row md:h-screen md:max-w-5xl md:mx-auto md:overflow-hidden md:border-x-4 md:border-pink-medium md:shadow-2xl overscroll-none">
       {/* "Sidebar" branding section */}
       <aside className="hidden md:flex flex-col w-80 bg-white border-r-4 border-pink-medium shrink-0">
-        <div className="p-10">
-          <h1 className="bold-heading text-5xl italic">MBULL</h1>
-          <p className="mt-4 text-[10px] font-bold uppercase tracking-[0.2em] text-pink-bold opacity-60">Private Space</p>
+        <div className="p-8 space-y-6">
+          <div className="flex flex-col">
+            <h1 className="bold-heading text-5xl italic">MBULL</h1>
+            <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.2em] text-pink-bold opacity-60">Private Space</p>
+          </div>
+
+          <div className="p-4 bg-pink-soft/50 rounded-2xl border border-pink-medium">
+            <p className="text-[10px] font-bold text-pink-deep uppercase mb-1 flex items-center gap-2">
+              <Sparkles className="w-3 h-3" />
+              Tips Hemat Quota
+            </p>
+            <p className="text-[9px] text-ink/60 leading-relaxed font-medium">
+              Obrolan ini bersifat global. Jaga quota database (50rb baca/hari) dengan tidak spam pesan beruntun ya mbull! ❤️
+            </p>
+          </div>
         </div>
         
         <div className="flex-1 p-6 space-y-4">
