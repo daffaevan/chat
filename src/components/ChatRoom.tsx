@@ -550,47 +550,39 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         
         if (isNewMessage && isFresh && latestMsg.senderId !== user.uid && isBackgrounded) {
           if (Notification.permission === 'granted') {
-          const title = `Pesan baru dari ${latestMsg.senderName}`;
-          let body = '';
-          
-          switch(latestMsg.type) {
-            case 'audio': body = '🎵 Mengirim Voice Note...'; break;
-            case 'image': body = '📸 Mengirim Foto baru...'; break;
-            case 'sticker': body = '✨ Mengirim Sticker lucu!'; break;
-            default: body = latestMsg.text || 'Membuka chat...';
-          }
-          
-          const options: any = {
-            body: body,
-            icon: getFullUrl(latestMsg.senderPhoto) || '/logo192.png',
-            badge: '/logo192.png',
-            tag: `chat-msg-${latestMsg.senderId}-${Date.now()}`, // Highly unique tag to ensure it always pops up as a new alert
-            renotify: true,
-            vibrate: [200, 100, 200],
-            data: { url: window.location.origin }
-          };
+            const title = `Pesan baru dari ${latestMsg.senderName}`;
+            let body = '';
+            
+            switch(latestMsg.type) {
+              case 'audio': body = '🎵 Mengirim Voice Note...'; break;
+              case 'image': body = '📸 Mengirim Foto baru...'; break;
+              case 'sticker': body = '✨ Mengirim Sticker lucu!'; break;
+              default: body = latestMsg.text || 'Membuka chat...';
+            }
+            
+            const options: any = {
+              body: body,
+              icon: getFullUrl(latestMsg.senderPhoto) || '/logo192.png',
+              badge: '/logo192.png',
+              tag: `msg-${latestMsg.id}`, // Guaranteed unique ID per message
+              renotify: true,
+              silent: false,
+              vibrate: [200, 100, 200],
+              data: { url: window.location.origin }
+            };
 
-          // Try service worker first for better background reliability
-          if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.ready.then(registration => {
-              // On some browsers, registration.active might be null during startup
-              if (registration.active) {
-                registration.active.postMessage({
-                  type: 'SHOW_NOTIFICATION',
-                  title,
-                  options
-                });
-              } else {
+            // Use registration directly for better reliability
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.ready.then(registration => {
                 registration.showNotification(title, options);
-              }
-            }).catch(() => {
+              }).catch(() => {
+                new Notification(title, options);
+              });
+            } else {
               new Notification(title, options);
-            });
-          } else {
-            new Notification(title, options);
+            }
           }
         }
-      }
     }
   }, [messages, user, notificationPermission]);
 
