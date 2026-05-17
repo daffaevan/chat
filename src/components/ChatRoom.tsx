@@ -529,8 +529,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
           
           const options: any = {
             body: body,
-            icon: latestMsg.senderPhoto || '/logo192.png',
-            badge: '/logo192.png',
+            icon: latestMsg.senderPhoto || '/appicon.png',
+            badge: '/appicon.png',
             tag: 'chat-mbull',
             renotify: true,
             data: { url: window.location.origin }
@@ -627,8 +627,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         const title = 'Yeay! Notifikasi Aktif! 🚀';
         const options = {
           body: 'Mbull bakal dapet kabar setiap Daffa kirim pesan baru! ❤️',
-          icon: '/logo192.png',
-          badge: '/logo192.png',
+          icon: '/appicon.png',
+          badge: '/appicon.png',
           vibrate: [100, 50, 100],
         };
 
