@@ -162,47 +162,8 @@ export function Login({ onSignIn, signUp, error }: { onSignIn: any, signUp: any,
             )}
           </button>
 
-          <button
-            type="button"
-            onClick={() => setIsRegister(!isRegister)}
-            className="w-full text-[10px] font-bold uppercase tracking-widest text-pink-deep mt-4 hover:underline"
-          >
-            {isRegister ? 'Sudah punya akun? Login' : 'Belum punya akun? Daftar dulu'}
-          </button>
+          <div className="h-4" />
         </form>
-
-        <div className="mt-8 pt-6 border-t-2 border-pink-soft">
-          <div className="flex flex-col items-center justify-center gap-2 mb-2">
-            <div className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full ${apiStatus.status === 'online' ? 'bg-green-500' : apiStatus.status === 'offline' ? 'bg-red-500' : 'bg-gray-300'} animate-pulse`} />
-              <p className="text-[8px] font-bold uppercase tracking-widest text-pink-bold opacity-60">
-                Backend Status: {apiStatus.status}
-              </p>
-            </div>
-            {apiStatus.status === 'offline' && apiStatus.error && (
-              <p className="text-[7px] text-red-400 font-mono">
-                Error: {apiStatus.error}
-              </p>
-            )}
-            <button 
-              onClick={() => {
-                localStorage.clear();
-                if ('serviceWorker' in navigator) {
-                  navigator.serviceWorker.getRegistrations().then(registrations => {
-                    for (const r of registrations) r.unregister();
-                  });
-                }
-                window.location.reload();
-              }}
-              className="text-[6px] text-pink-medium hover:text-pink-deep uppercase font-bold tracking-tighter mt-1"
-            >
-              Reset Cache & Fix Offline
-            </button>
-          </div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-pink-bold opacity-40">
-            MBULL v2.0 READY
-          </p>
-        </div>
       </motion.div>
     </div>
   );
