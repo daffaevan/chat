@@ -435,9 +435,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       checkQuotaError(err);
     });
 
-    // 2. Subscribe to Stickers - Static fetching of stickers is better than onSnapshot for reads
-    // if we don't expect other people to add stickers to OUR collection.
-    // However, if we keep onSnapshot, we must ensure it doesn't re-run.
+    // 2. Subscribe to Stickers
     const stickersRef = collection(db, 'stickers');
     const sq = query(stickersRef, where('userId', '==', user.uid));
     
@@ -448,48 +446,12 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       })) as Sticker[];
       const sortedStickers = [...stickers].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       setMyStickers(prev => {
-        // Simple comparison to prevent excessive re-renders if nothing changed
         if (prev.length === sortedStickers.length && prev.every((s, i) => s.id === sortedStickers[i].id)) return prev;
         return sortedStickers;
       });
     }, (err) => {
       console.error("Stickers Subscription Error:", err);
       checkQuotaError(err);
-    });
-
-    // 3. Optimized Status Logic
-    const activeListeners = new Map<string, () => void>();
-    const setupStatusListener = (targetUid: string) => {
-      if (!targetUid || targetUid === user.uid || activeListeners.has(targetUid)) return;
-      
-      const unsub = onSnapshot(doc(db, 'status', targetUid), (docSnap) => {
-        if (docSnap.exists()) {
-          const val = parseInt(docSnap.data().value || "0");
-          if (val > 0) {
-            setGlobalLastRead(prev => val > prev ? val : prev);
-          }
-        }
-      });
-      activeListeners.set(targetUid, unsub);
-    };
-
-    // Use a single query for general presence instead of many docs if possible
-    const recentStatusQuery = query(
-      collection(db, 'status'), 
-      orderBy('updatedAt', 'desc'), 
-      limit(3) // Only listen to top 3 active
-    );
-
-    const unsubscribeStatus = onSnapshot(recentStatusQuery, (snapshot) => {
-      snapshot.docs.forEach(d => {
-        if (d.id !== user.uid) {
-          // Update immediately
-          const val = parseInt(d.data().value || "0");
-          if (val > 0) setGlobalLastRead(prev => val > prev ? val : prev);
-          // Also set up Doc level listener for real-time updates of this specific user
-          setupStatusListener(d.id);
-        }
-      });
     });
 
     // Socket listeners
@@ -504,9 +466,6 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     return () => {
       unsubscribeMessages();
       unsubscribeStickers();
-      unsubscribeStatus();
-      activeListeners.forEach(unsub => unsub());
-      activeListeners.clear();
       socket.off('lastReadUpdated');
       socket.disconnect();
     };
@@ -828,28 +787,10 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   useEffect(() => {
     if (messages.length === 0) return;
 
-    const performUpdate = async (msgTime: number) => {
+    const performUpdate = (msgTime: number) => {
       lastUpdateRef.current = msgTime;
-      // 1. Live notification via Socket (Cheapest, instant)
+      // Socket notification is enough - instant and free
       socket.emit('updateLastRead', { uid: user.uid, timestamp: msgTime });
-      
-      try {
-        // 2. Occasional persistence to Firestore (To handle boros logic)
-        // Only write to Firestore if the change is significant (more than 30s difference)
-        // and only if the window is focused
-        const shouldWriteToFirestore = document.hasFocus() && (!lastFirestoreWriteRef.current || (Date.now() - lastFirestoreWriteRef.current > 30000));
-        
-        if (shouldWriteToFirestore) {
-          lastFirestoreWriteRef.current = Date.now();
-          await setDoc(doc(db, 'status', user.uid), { 
-            uid: user.uid,
-            value: msgTime.toString(),
-            updatedAt: Date.now()
-          }, { merge: true });
-        }
-      } catch (err) {
-        console.error("Error updating last read:", err);
-      }
     };
 
     const updateLastRead = () => {
