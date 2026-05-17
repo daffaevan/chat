@@ -919,6 +919,18 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     };
   }, []);
 
+  const scrollToMessage = useCallback((messageId: string) => {
+    const element = document.getElementById(`msg-${messageId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Add a quick highlight effect
+      element.classList.add('highlight-message');
+      setTimeout(() => {
+        element.classList.remove('highlight-message');
+      }, 2000);
+    }
+  }, []);
+
   const sendMessage = useCallback(async (e: FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || sending) return;
@@ -1390,6 +1402,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                   )}
                   
                   <motion.div
+                    id={`msg-${msg.id}`}
                     initial={{ opacity: 0, x: msg.senderId === user.uid ? 20 : -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     drag="x"
@@ -1486,7 +1499,13 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                         msg.type === 'sticker' ? 'bg-transparent shadow-none p-0 overflow-visible' : (msg.senderId === user.uid ? 'message-sent' : 'message-received')
                       }`}>
                         {msg.replyTo && (
-                          <div className={`mb-2 p-2 bg-black/5 rounded-lg border-l-4 border-pink-deep text-[10px] leading-tight ${msg.type === 'sticker' ? 'bg-white/80 backdrop-blur-sm' : ''}`}>
+                          <div 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              scrollToMessage(msg.replyTo!.id);
+                            }}
+                            className={`mb-2 p-2 bg-black/5 rounded-lg border-l-4 border-pink-deep text-[10px] leading-tight cursor-pointer hover:bg-black/10 transition-colors ${msg.type === 'sticker' ? 'bg-white/80 backdrop-blur-sm' : ''}`}
+                          >
                             <p className="font-bold text-pink-deep mb-0.5">{msg.replyTo.senderName}</p>
                             <p className="opacity-70 line-clamp-2">{msg.replyTo.text}</p>
                           </div>

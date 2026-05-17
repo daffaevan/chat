@@ -61,3 +61,14 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--color-pink-deep);
 }
+
+@keyframes highlight-flash {
+  0% { background-color: var(--color-pink-medium); transform: scale(1.02); }
+  50% { background-color: var(--color-pink-medium); transform: scale(1.02); }
+  100% { background-color: transparent; transform: scale(1); }
+}
+
+.highlight-message {
+  animation: highlight-flash 2s ease-out;
+  border-radius: 20px;
+}
