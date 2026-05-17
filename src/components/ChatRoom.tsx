@@ -7,7 +7,6 @@ import { Send, LogOut, Heart, Sparkles, Reply, X, User as UserIcon, Camera, Chec
 import { LocalUser } from '../hooks/useAuth';
 import { format } from 'date-fns';
 import { getCroppedImg, compressImage } from '../lib/imageUtils';
-import { VirtualKeyboard } from './VirtualKeyboard';
 import { db, auth, storage, handleFirestoreError, OperationType } from '../lib/firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { 
@@ -206,7 +205,6 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const channelRef = useRef<any>(null);
-  const [showVirtualKeyboard, setShowVirtualKeyboard] = useState(false);
   const [sending, setSending] = useState(false);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [selectedUserProfile, setSelectedUserProfile] = useState<{ name: string, photo: string | null } | null>(null);
@@ -842,9 +840,9 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       resizeObserver.disconnect();
       clearTimeout(timer);
     };
-  }, [messages, showVirtualKeyboard, showStickerPicker]);
+  }, [messages, showStickerPicker]);
 
-  // Scroll to hide keyboard and sticker picker logic
+  // Scroll to hide sticker picker logic
   useEffect(() => {
     const scrollContainer = scrollRef.current;
     if (!scrollContainer) return;
@@ -852,7 +850,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     let lastScrollTop = scrollContainer.scrollTop;
 
     const handleScroll = () => {
-      if (!showVirtualKeyboard && !showStickerPicker) {
+      if (!showStickerPicker) {
         lastScrollTop = scrollContainer.scrollTop;
         return;
       }
@@ -862,7 +860,6 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       
       // If we are scrolling UP (diff < 0) significantly
       if (diff < -15) {
-        if (showVirtualKeyboard) setShowVirtualKeyboard(false);
         if (showStickerPicker) setShowStickerPicker(false);
       }
       
@@ -871,56 +868,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
     scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
     return () => scrollContainer.removeEventListener('scroll', handleScroll);
-  }, [showVirtualKeyboard, showStickerPicker]);
+  }, [showStickerPicker]);
 
-
-  const handleVirtualInput = useCallback((char: string) => {
-    if (!inputRef.current) return;
-    
-    // Read from DOM only if we don't have a reliable tracked value
-    const currentPos = selectionRef.current ?? inputRef.current.selectionStart ?? newMessage.length;
-    
-    setNewMessage(prev => {
-      const text = prev.substring(0, currentPos) + char + prev.substring(currentPos);
-      return text;
-    });
-    
-    const newPos = currentPos + char.length;
-    selectionRef.current = newPos;
-
-    // We still update the DOM selection on the next tick, 
-    // but the state update is now consistent even if this is called multiple times per tick.
-    setTimeout(() => {
-      if (inputRef.current) {
-        inputRef.current.focus();
-        inputRef.current.setSelectionRange(newPos, newPos);
-      }
-    }, 0);
-  }, []);
-
-  const handleVirtualBackspace = useCallback(() => {
-    if (!inputRef.current) return;
-    
-    const currentPos = selectionRef.current ?? inputRef.current.selectionStart ?? newMessage.length;
-    let newPos = currentPos;
-
-    setNewMessage(prev => {
-      if (currentPos > 0) {
-        newPos = currentPos - 1;
-        return prev.substring(0, currentPos - 1) + prev.substring(currentPos);
-      }
-      return prev;
-    });
-
-    selectionRef.current = newPos;
-    
-    setTimeout(() => {
-      if (inputRef.current) {
-        inputRef.current.focus();
-        inputRef.current.setSelectionRange(newPos, newPos);
-      }
-    }, 0);
-  }, []);
 
   const sendMessage = useCallback(async (e: FormEvent) => {
     e.preventDefault();
@@ -1123,22 +1072,11 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
   useEffect(() => {
     if (replyingTo) {
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      if (isMobile) {
-        setShowVirtualKeyboard(true);
-        setShowStickerPicker(false);
+      if (inputRef.current) {
+        inputRef.current.focus();
       }
     }
   }, [replyingTo]);
-
-  const handleVirtualSend = useCallback(() => {
-    const fakeEvent = { preventDefault: () => {} } as any;
-    sendMessageRef.current(fakeEvent);
-  }, []);
-
-  const handleVirtualClose = useCallback(() => {
-    setShowVirtualKeyboard(false);
-  }, []);
 
   // Sticker Picker View
   const renderStickerPicker = () => {
@@ -1327,7 +1265,6 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         <div 
           ref={scrollRef}
           onClick={() => {
-            setShowVirtualKeyboard(false);
             setShowStickerPicker(false);
           }}
           className="flex-1 overflow-y-auto px-1 py-6 scrollbar-hide min-h-0 relative z-10"
@@ -1623,8 +1560,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
         <motion.footer 
           animate={{ 
-            backgroundColor: showVirtualKeyboard ? 'rgba(255, 182, 193, 0.2)' : 'rgba(255, 255, 255, 1)',
-            padding: showVirtualKeyboard ? '4px' : '8px'
+            backgroundColor: 'rgba(255, 255, 255, 1)',
+            padding: '8px'
           }}
           transition={{ duration: 0.1 }}
           className="shrink-0 z-20 border-t-2 border-pink-medium"
@@ -1658,13 +1595,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                   <button
                     type="button"
                     onClick={() => {
-                      if (showStickerPicker) {
-                        setShowStickerPicker(false);
-                        setShowVirtualKeyboard(true);
-                      } else {
-                        setShowStickerPicker(true);
-                        setShowVirtualKeyboard(false);
-                      }
+                        setShowStickerPicker(!showStickerPicker);
                     }}
                     className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shrink-0 ${
                       showStickerPicker ? 'bg-pink-deep text-white' : 'bg-pink-soft text-pink-deep border border-pink-medium'
@@ -1691,22 +1622,13 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                     <input
                       ref={inputRef}
                       type="text"
-                      inputMode="none"
                       value={newMessage}
                       onChange={(e) => setNewMessage(e.target.value)}
                       onFocus={() => {
-                        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-                        if (isMobile) {
-                          setShowVirtualKeyboard(true);
-                          setShowStickerPicker(false);
-                        }
+                        setShowStickerPicker(false);
                       }}
                       onClick={() => {
-                        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-                        if (isMobile) {
-                          setShowVirtualKeyboard(true);
-                          setShowStickerPicker(false);
-                        }
+                        setShowStickerPicker(false);
                       }}
                       placeholder="Say something mbull..."
                       className="bold-input flex-1 tracking-tight text-base placeholder:text-pink-medium/60 py-1.5 h-10 px-4 caret-pink-deep"
@@ -1739,13 +1661,6 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         
         <div className="flex flex-col shrink-0">
           {renderStickerPicker()}
-          <VirtualKeyboard 
-            isOpen={showVirtualKeyboard}
-            onInput={handleVirtualInput}
-            onBackspace={handleVirtualBackspace}
-            onSend={handleVirtualSend}
-            onClose={handleVirtualClose}
-          />
         </div>
         <input 
           type="file" 
