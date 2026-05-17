@@ -959,6 +959,24 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     return () => scrollContainer.removeEventListener('scroll', handleScroll);
   }, [showStickerPicker]);
 
+  // Handle visual viewport changes (keyboard on mobile)
+  useEffect(() => {
+    if (!window.visualViewport) return;
+
+    const handleResize = () => {
+      // When viewport height decreases (keyboard opens)
+      if (window.visualViewport) {
+        scrollToBottom('smooth');
+      }
+    };
+
+    window.visualViewport.addEventListener('resize', handleResize);
+    window.visualViewport.addEventListener('scroll', handleResize);
+    return () => {
+      window.visualViewport?.removeEventListener('resize', handleResize);
+      window.visualViewport?.removeEventListener('scroll', handleResize);
+    };
+  }, []);
 
   const sendMessage = useCallback(async (e: FormEvent) => {
     e.preventDefault();
@@ -985,6 +1003,12 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       await addDoc(collection(db, 'messages'), messageData);
       setNewMessage('');
       setReplyingTo(null);
+      
+      // Keep keyboard open and scroll to bottom
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        scrollToBottom('smooth');
+      });
     } catch (error: any) {
       if (!checkQuotaError(error)) {
         handleFirestoreError(error, OperationType.CREATE, 'messages');
@@ -1754,6 +1778,10 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                   <button
                     type="submit"
                     disabled={!newMessage.trim() || sending}
+                    onPointerDown={(e) => {
+                      // Prevent steal focus from input
+                      if (newMessage.trim()) e.preventDefault();
+                    }}
                     className="w-10 h-10 bg-pink-deep text-white rounded-full flex items-center justify-center hover:bg-ink transition-all shadow-md active:opacity-80 disabled:opacity-50 shrink-0"
                   >
                     <Send className="w-4 h-4 ml-0.5" />
