@@ -419,28 +419,64 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       checkQuotaError(err);
     });
 
-    // 3. Subscribe to App Status (Last Read) - Per User
-    const unsubscribeStatus = onSnapshot(collection(db, 'status'), (snapshot) => {
-      let maxOtherRead = 0;
+    // 3. Subscribe to App Status (Last Read) - Optimized
+    // We only need to listen to the people we are actually chatting with.
+    // Since this is a small private project, we'll try to find the "other" person.
+    
+    const activeListeners = new Map<string, () => void>();
+
+    const setupStatusListener = (targetUid: string) => {
+      if (targetUid === user.uid || activeListeners.has(targetUid)) return;
+      
+      console.log(`[STATUS] Setting up targeted listener for: ${targetUid}`);
+      const unsub = onSnapshot(doc(db, 'status', targetUid), (docSnap) => {
+        if (docSnap.exists()) {
+          const val = parseInt(docSnap.data().value || "0");
+          if (val > 0) {
+            setGlobalLastRead(prev => {
+              if (val > prev) {
+                console.log(`[STATUS] Updated globalLastRead from targeted doc ${targetUid}: ${val}`);
+                return val;
+              }
+              return prev;
+            });
+          }
+        }
+      }, (err) => {
+        console.error(`Status Subscription Error for ${targetUid}:`, err);
+        checkQuotaError(err);
+      });
+      
+      activeListeners.set(targetUid, unsub);
+    };
+
+    // Initially, try to find the other person from the current messages
+    const otherSenders = new Set(messages.map(m => m.senderId).filter(id => id !== user.uid));
+    otherSenders.forEach(setupStatusListener);
+
+    // Also, as a fallback for the very first time or different rooms, 
+    // we can listen to the last 2 people who were active in status
+    const recentStatusQuery = query(
+      collection(db, 'status'), 
+      orderBy('updatedAt', 'desc'), 
+      limit(5)
+    );
+
+    const unsubscribeStatus = onSnapshot(recentStatusQuery, (snapshot) => {
       snapshot.docs.forEach(d => {
-        // Skip our own status AND skip any stale or special docs
-        if (d.id !== user.uid && d.id.length > 10) {
+        if (d.id !== user.uid) {
+          setupStatusListener(d.id);
+          
+          // Also update immediately from this snapshot
           const val = parseInt(d.data().value || "0");
-          if (val > maxOtherRead) maxOtherRead = val;
+          if (val > 0) {
+            setGlobalLastRead(prev => val > prev ? val : prev);
+          }
         }
       });
-      if (maxOtherRead > 0) {
-        setGlobalLastRead(prev => {
-          if (maxOtherRead > prev) {
-            console.log(`[STATUS] Updated globalLastRead from Firestore: ${maxOtherRead}`);
-            return maxOtherRead;
-          }
-          return prev;
-        });
-      }
     }, (err) => {
-      console.error("Status Subscription Error:", err);
-      checkQuotaError(err);
+      console.error("Recent Status Subscription Error:", err);
+      // If we hit index errors, fallback to just using message-based listeners
     });
 
     // Socket listeners for typing and presence
@@ -470,11 +506,13 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       unsubscribeMessages();
       unsubscribeStickers();
       unsubscribeStatus();
+      activeListeners.forEach(unsub => unsub());
+      activeListeners.clear();
       socket.off('lastReadUpdated');
       socket.off('userTyping');
       socket.disconnect();
     };
-  }, [user.uid, user.displayName]);
+  }, [user.uid, user.displayName, messages.length === 0]); // only re-run if we go from 0 to messages or vice versa
 
   // Helper to reliably get a numeric timestamp from various formats
   const getTimestamp = (val: any): number => {
@@ -529,8 +567,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
           
           const options: any = {
             body: body,
-            icon: latestMsg.senderPhoto || '/appicon.png',
-            badge: '/appicon.png',
+            icon: latestMsg.senderPhoto || '/logo192.png',
+            badge: '/logo192.png',
             tag: 'chat-mbull',
             renotify: true,
             data: { url: window.location.origin }
@@ -627,8 +665,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         const title = 'Yeay! Notifikasi Aktif! 🚀';
         const options = {
           body: 'Mbull bakal dapet kabar setiap Daffa kirim pesan baru! ❤️',
-          icon: '/appicon.png',
-          badge: '/appicon.png',
+          icon: '/logo192.png',
+          badge: '/logo192.png',
           vibrate: [100, 50, 100],
         };
 
@@ -799,12 +837,14 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       
       try {
         // 2. Occasional persistence to Firestore (To handle boros logic)
-        // Only write to Firestore if the change is significant (more than 15s difference)
-        const shouldWriteToFirestore = !lastFirestoreWriteRef.current || (Date.now() - lastFirestoreWriteRef.current > 15000);
+        // Only write to Firestore if the change is significant (more than 30s difference)
+        // and only if the window is focused
+        const shouldWriteToFirestore = document.hasFocus() && (!lastFirestoreWriteRef.current || (Date.now() - lastFirestoreWriteRef.current > 30000));
         
         if (shouldWriteToFirestore) {
           lastFirestoreWriteRef.current = Date.now();
           await setDoc(doc(db, 'status', user.uid), { 
+            uid: user.uid,
             value: msgTime.toString(),
             updatedAt: Date.now()
           }, { merge: true });

@@ -11,8 +11,8 @@ self.addEventListener('push', function(event) {
   const data = event.data.json();
   const options = {
     body: data.body,
-    icon: data.icon || '/appicon.png',
-    badge: '/appicon.png',
+    icon: data.icon || '/logo192.png',
+    badge: '/logo192.png',
     vibrate: [100, 50, 100],
     data: {
       url: data.url
@@ -30,7 +30,7 @@ self.addEventListener('message', function(event) {
     event.waitUntil(
       self.registration.showNotification(title, {
         ...options,
-        badge: '/appicon.png',
+        badge: '/logo192.png',
       })
     );
   }
