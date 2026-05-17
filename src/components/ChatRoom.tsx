@@ -3,7 +3,7 @@ import axios from 'axios';
 import socket from '../lib/socket';
 import Cropper from 'react-easy-crop';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, LogOut, Heart, Sparkles, Reply, X, User as UserIcon, Camera, Check, Mic, Square, Trash2, Play, Pause, Smile } from 'lucide-react';
+import { Send, LogOut, Heart, Sparkles, Reply, X, User as UserIcon, Camera, Check, Mic, Square, Trash2, Play, Pause, Smile, ArrowDown } from 'lucide-react';
 import { LocalUser } from '../hooks/useAuth';
 import { format } from 'date-fns';
 import { getCroppedImg, compressImage } from '../lib/imageUtils';
@@ -244,6 +244,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const [reactionMessageId, setReactionMessageId] = useState<string | null>(null);
   const pointerDownTimeRef = useRef<number>(0);
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   const checkQuotaError = useCallback((err: any) => {
     if (err?.code === 'resource-exhausted' || err?.message?.toLowerCase().includes('quota exceeded')) {
@@ -421,8 +422,8 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   };
 
   useEffect(() => {
-    // 1. Subscribe to Messages - Reduced limit for better performance
-    const q = query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(30));
+    // 1. Subscribe to Messages - Increased limit slightly for better reply history
+    const q = query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(50));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
       const newMessages = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -488,6 +489,22 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const handleScroll = useCallback(() => {
+    if (scrollRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+      const isScrolledUp = scrollHeight - scrollTop - clientHeight > 300;
+      setShowScrollButton(isScrolledUp);
+    }
+  }, []);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      return () => container.removeEventListener('scroll', handleScroll);
+    }
+  }, [handleScroll]);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const stickerUploadRef = useRef<HTMLInputElement>(null);
@@ -921,13 +938,30 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
   const scrollToMessage = useCallback((messageId: string) => {
     const element = document.getElementById(`msg-${messageId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const container = scrollRef.current;
+    
+    if (element && container) {
+      // Manual calculation for more reliable smooth scroll
+      const elementRect = element.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const relativeTop = elementRect.top - containerRect.top;
+      const targetScrollTop = container.scrollTop + relativeTop - (containerRect.height / 2) + (elementRect.height / 2);
+
+      container.scrollTo({
+        top: targetScrollTop,
+        behavior: 'smooth'
+      });
+
+      // Clear any existing highlights first
+      document.querySelectorAll('.highlight-message').forEach(el => {
+        el.classList.remove('highlight-message');
+      });
+
       // Add a quick highlight effect
       element.classList.add('highlight-message');
       setTimeout(() => {
         element.classList.remove('highlight-message');
-      }, 2000);
+      }, 2500);
     }
   }, []);
 
@@ -1316,10 +1350,21 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
               )}
               <button 
                 onClick={() => setShowProfile(true)}
-                className="p-2 text-pink-deep"
+                className="p-1.5 text-pink-deep transition-transform active:scale-95"
                 title="Profile"
               >
-                 <UserIcon className="w-6 h-6" />
+                {profilePhoto ? (
+                  <div className="w-8 h-8 rounded-full overflow-hidden border-2 border-pink-soft/50 shadow-sm">
+                    <img 
+                      src={profilePhoto} 
+                      alt="Profile" 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                ) : (
+                  <UserIcon className="w-6 h-6" />
+                )}
               </button>
             </div>
          </header>
@@ -1334,7 +1379,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
             setShowStickerPicker(false);
             setReactionMessageId(null);
           }}
-          className="flex-1 overflow-y-auto px-1 py-6 scrollbar-hide min-h-0 relative z-10"
+          className="flex-1 overflow-y-auto px-1 py-6 scrollbar-hide min-h-0 relative z-10 smooth-scroll"
         >
           {isQuotaExceeded ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-8 space-y-4">
@@ -1502,7 +1547,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                           <div 
                             onClick={(e) => {
                               e.stopPropagation();
-                              scrollToMessage(msg.replyTo!.id);
+                              scrollToMessage(msg.replyTo!.messageId);
                             }}
                             className={`mb-2 p-2 bg-black/5 rounded-lg border-l-4 border-pink-deep text-[10px] leading-tight cursor-pointer hover:bg-black/10 transition-colors ${msg.type === 'sticker' ? 'bg-white/80 backdrop-blur-sm' : ''}`}
                           >
@@ -1724,29 +1769,46 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                   )}
                 </div>
 
-                {!newMessage.trim() ? (
-                  <button
-                    type="button"
-                    onClick={isRecording ? stopRecording : startRecording}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-md active:opacity-80 shrink-0 ${
-                      isRecording ? 'bg-red-500 animate-pulse text-white' : 'bg-pink-deep text-white hover:bg-ink'
-                    }`}
-                  >
-                    {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  </button>
-                ) : (
-                  <button
-                    type="submit"
-                    disabled={!newMessage.trim() || sending}
-                    onPointerDown={(e) => {
-                      // Prevent steal focus from input
-                      if (newMessage.trim()) e.preventDefault();
-                    }}
-                    className="w-10 h-10 bg-pink-deep text-white rounded-full flex items-center justify-center hover:bg-ink transition-all shadow-md active:opacity-80 disabled:opacity-50 shrink-0"
-                  >
-                    <Send className="w-4 h-4 ml-0.5" />
-                  </button>
-                )}
+                <div className="relative shrink-0">
+                  <AnimatePresence>
+                    {showScrollButton && (
+                      <motion.button
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        onClick={() => scrollToBottom()}
+                        className="absolute bottom-full mb-5 right-1 z-50 w-8 h-8 bg-white/90 backdrop-blur-md rounded-full shadow-md border border-pink-soft text-pink-deep hover:bg-pink-soft transition-all active:scale-95 flex items-center justify-center shrink-0"
+                        title="Scroll to bottom"
+                      >
+                        <ArrowDown className="w-4 h-4" />
+                      </motion.button>
+                    )}
+                  </AnimatePresence>
+
+                  {!newMessage.trim() ? (
+                    <button
+                      type="button"
+                      onClick={isRecording ? stopRecording : startRecording}
+                      className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-md active:opacity-80 shrink-0 ${
+                        isRecording ? 'bg-red-500 animate-pulse text-white' : 'bg-pink-deep text-white hover:bg-ink'
+                      }`}
+                    >
+                      {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      disabled={!newMessage.trim() || sending}
+                      onPointerDown={(e) => {
+                        // Prevent steal focus from input
+                        if (newMessage.trim()) e.preventDefault();
+                      }}
+                      className="w-10 h-10 bg-pink-deep text-white rounded-full flex items-center justify-center hover:bg-ink transition-all shadow-md active:opacity-80 disabled:opacity-50 shrink-0"
+                    >
+                      <Send className="w-4 h-4 ml-0.5" />
+                    </button>
+                  )}
+                </div>
               </div>
           </form>
         </motion.footer>

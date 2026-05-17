@@ -63,12 +63,18 @@
 }
 
 @keyframes highlight-flash {
-  0% { background-color: var(--color-pink-medium); transform: scale(1.02); }
-  50% { background-color: var(--color-pink-medium); transform: scale(1.02); }
-  100% { background-color: transparent; transform: scale(1); }
+  0% { background-color: var(--color-pink-medium); transform: scale(1.02); box-shadow: 0 0 20px rgba(236, 72, 153, 0.4); }
+  50% { background-color: var(--color-pink-medium); transform: scale(1.02); box-shadow: 0 0 20px rgba(236, 72, 153, 0.4); }
+  100% { background-color: transparent; transform: scale(1); box-shadow: none; }
 }
 
 .highlight-message {
-  animation: highlight-flash 2s ease-out;
+  animation: highlight-flash 1.5s cubic-bezier(0.4, 0, 0.2, 1);
   border-radius: 20px;
+  position: relative;
+  z-index: 50;
+}
+
+.smooth-scroll {
+  scroll-behavior: smooth;
 }
