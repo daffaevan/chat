@@ -242,6 +242,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [reactionMessageId, setReactionMessageId] = useState<string | null>(null);
+  const pointerDownTimeRef = useRef<number>(0);
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
 
   const checkQuotaError = useCallback((err: any) => {
@@ -267,6 +268,10 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
   const handleReaction = async (messageId: string, emoji: string) => {
     if (!user) return;
+    
+    // Close reaction menu immediately after selection
+    setReactionMessageId(null);
+
     const msg = messages.find(m => m.id === messageId);
     if (!msg) return;
 
@@ -1350,6 +1355,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
           ref={scrollRef}
           onClick={() => {
             setShowStickerPicker(false);
+            setReactionMessageId(null);
           }}
           className="flex-1 overflow-y-auto px-1 py-6 scrollbar-hide min-h-0 relative z-10"
         >
@@ -1476,18 +1482,40 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                           e.preventDefault();
                           setReactionMessageId(reactionMessageId === msg.id ? null : msg.id);
                         }}
-                        // Long press implementation using motion props
                         onPointerDown={(e) => {
+                          pointerDownTimeRef.current = Date.now();
                           const timer = setTimeout(() => {
-                            setReactionMessageId(reactionMessageId === msg.id ? null : msg.id);
+                            setReactionMessageId(msg.id);
                           }, 500); // 500ms long press
-                          (e.target as any)._longPressTimer = timer;
+                          (e.currentTarget as any)._longPressTimer = timer;
                         }}
                         onPointerUp={(e) => {
-                          clearTimeout((e.target as any)._longPressTimer);
+                          clearTimeout((e.currentTarget as any)._longPressTimer);
                         }}
                         onPointerLeave={(e) => {
-                          clearTimeout((e.target as any)._longPressTimer);
+                          clearTimeout((e.currentTarget as any)._longPressTimer);
+                        }}
+                        onClick={(e) => {
+                          const duration = Date.now() - pointerDownTimeRef.current;
+                          // If it was a long press (approx 400ms+), stop propagation 
+                          // to prevent the scroll container's onClick from closing it.
+                          if (duration > 400) {
+                            e.stopPropagation();
+                            return;
+                          }
+                          
+                          // Handle standard clicks
+                          if (reactionMessageId === msg.id) {
+                            // If menu is open, toggle it off and stop propagation
+                            setReactionMessageId(null);
+                            e.stopPropagation();
+                          } else {
+                            // If it's a sticker, handle sticker action
+                            if (msg.type === 'sticker' && msg.stickerUrl) {
+                              setSelectedStickerForAction(msg.stickerUrl);
+                              e.stopPropagation(); // Don't let it bubble to parent background click
+                            }
+                          }
                         }}
                         className={`message-bubble relative cursor-pointer active:scale-[0.98] transition-all group ${
                         msg.type === 'sticker' ? 'bg-transparent shadow-none p-0 overflow-visible' : (msg.senderId === user.uid ? 'message-sent' : 'message-received')
@@ -1523,14 +1551,11 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
                             </motion.div>
                           )}
                         </AnimatePresence>
-
+ 
                         {msg.type === 'audio' ? (
                           <AudioPlayer url={getFullUrl(msg.audioURL!)} duration={msg.audioDuration} />
                         ) : msg.type === 'sticker' ? (
-                          <div 
-                            className="relative group"
-                            onClick={() => setSelectedStickerForAction(msg.stickerUrl!)}
-                          >
+                          <div className="relative group">
                             <motion.img 
                               src={getFullUrl(msg.stickerUrl!)} 
                               alt="sticker" 
