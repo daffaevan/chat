@@ -534,13 +534,17 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
       const isNewMessage = lastMessageIdRef.current !== null;
       lastMessageIdRef.current = latestMsg.id;
       
+      // Check message freshness (within last 2 minutes)
+      const isFresh = latestMsg.createdAt ? (Date.now() - latestMsg.createdAt < 120000) : true;
+      
       // Only notify if:
       // 1. It's a new message (not just the initial load)
       // 2. It's NOT from us
       // 3. The tab is hidden/backgrounded
-      if (isNewMessage && latestMsg.senderId !== user.uid && (document.hidden || document.visibilityState !== 'visible')) {
+      // 4. The message is fresh
+      if (isNewMessage && isFresh && latestMsg.senderId !== user.uid && (document.hidden || document.visibilityState !== 'visible')) {
         if (Notification.permission === 'granted') {
-          const title = `Mbull, ada pesan dari ${latestMsg.senderName}! ❤️`;
+          const title = `Pesan baru dari ${latestMsg.senderName}`;
           let body = '';
           
           switch(latestMsg.type) {
@@ -554,15 +558,16 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
             body: body,
             icon: getFullUrl(latestMsg.senderPhoto) || '/logo192.png',
             badge: '/logo192.png',
-            tag: 'chat-mbull',
-            renotify: true,
+            tag: `chat-msg-${latestMsg.senderId}`, // Group by sender to ensure multiple senders stack, but same sender refreshes
+            renotify: true, // Pulse/vibrate again for the same tag
             vibrate: [200, 100, 200],
             data: { url: window.location.origin }
           };
 
-          // Try service worker first
+          // Try service worker first for better background reliability
           if ('serviceWorker' in navigator) {
             navigator.serviceWorker.ready.then(registration => {
+              // On some browsers, registration.active might be null during startup
               if (registration.active) {
                 registration.active.postMessage({
                   type: 'SHOW_NOTIFICATION',
