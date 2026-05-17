@@ -498,6 +498,59 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const stickerUploadRef = useRef<HTMLInputElement>(null);
   const selectionRef = useRef<number | null>(null);
 
+  // Notification logic for new messages
+  const lastMessageIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (messages.length === 0 || !user) return;
+    
+    const latestMsg = messages[messages.length - 1];
+    
+    // Check if this is truly a new message we haven't processed
+    if (latestMsg.id !== lastMessageIdRef.current) {
+      const isNewMessage = lastMessageIdRef.current !== null;
+      lastMessageIdRef.current = latestMsg.id;
+      
+      // Only notify if:
+      // 1. It's a new message (not just the initial load)
+      // 2. It's NOT from us
+      // 3. The tab is hidden/backgrounded
+      if (isNewMessage && latestMsg.senderId !== user.uid && (document.hidden || document.visibilityState !== 'visible')) {
+        if (Notification.permission === 'granted') {
+          const title = `Mbull, ada pesan dari ${latestMsg.senderName}! ❤️`;
+          let body = '';
+          
+          switch(latestMsg.type) {
+            case 'audio': body = '🎵 Mengirim Voice Note...'; break;
+            case 'image': body = '📸 Mengirim Foto baru...'; break;
+            case 'sticker': body = '✨ Mengirim Sticker lucu!'; break;
+            default: body = latestMsg.text || 'Membuka chat...';
+          }
+          
+          const options: any = {
+            body: body,
+            icon: latestMsg.senderPhoto || '/logo192.png',
+            badge: '/logo192.png',
+            tag: 'chat-mbull',
+            renotify: true,
+            data: { url: window.location.origin }
+          };
+
+          // Try service worker first
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.ready.then(registration => {
+              registration.showNotification(title, options);
+            }).catch(() => {
+              new Notification(title, options);
+            });
+          } else {
+            new Notification(title, options);
+          }
+        }
+      }
+    }
+  }, [messages, user]);
+
   const handleStickerUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -552,43 +605,41 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
 
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
-      alert('Browser Anda tidak mendukung notifikasi.');
+      alert('Yah Mbull, browser ini nggak dukung notifikasi. Coba pake Chrome atau Safari ya! ❤️');
       return;
     }
     
     try {
-      // For iOS, remind them to add to home screen if they haven't
+      // Logic for iOS
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
       const isStandalone = (window.navigator as any).standalone || window.matchMedia('(display-mode: standalone)').matches;
       
       if (isIOS && !isStandalone) {
-        alert('Mbull, khusus di iPhone/iPad, biar notifikasinya lancar dan nggak ilang-ilang, kamu harus "Tambah ke Layar Beranda" (Add to Home Screen) dulu ya! Caranya: Klik tombol Share (panah kotak) di Safari, lalu pilih "Tambah ke Layar Beranda".');
+        alert('Khusus iPhone/iPad, Mbull harus klik "Tambah ke Layar Beranda" (Add to Home Screen) dulu di Safari biar notifikasinya muncul yaa! ❤️');
+        return;
       }
 
       const permission = await Notification.requestPermission();
       setNotificationPermission(permission);
 
       if (permission === 'granted') {
-        const registration = 'serviceWorker' in navigator ? await navigator.serviceWorker.ready : null;
-        const title = 'Notifikasi Aktif! 🚀';
+        // Test notification
+        const title = 'Yeay! Notifikasi Aktif! 🚀';
         const options = {
-          body: 'Mbull akan menerima pemberitahuan setiap ada pesan baru dari Daffa.',
+          body: 'Mbull bakal dapet kabar setiap Daffa kirim pesan baru! ❤️',
           icon: '/logo192.png',
           badge: '/logo192.png',
           vibrate: [100, 50, 100],
         };
 
-        if (registration) {
-          if (registration.active) {
-            registration.active.postMessage({ type: 'SHOW_NOTIFICATION', title, options });
-          } else {
-            registration.showNotification(title, options);
-          }
+        if ('serviceWorker' in navigator) {
+          const registration = await navigator.serviceWorker.ready;
+          registration.showNotification(title, options);
         } else {
           new Notification(title, options);
         }
       } else if (permission === 'denied') {
-        alert('Izin notifikasi ditolak. Mbull perlu mengaktifkannya secara manual di pengaturan browser biar Daffa bisa kasih kejutan lewat notif!');
+        alert('Yah, Mbull nolak notifnya. Aktifin manual di setingan browser ya biar nggak ketinggalan kabar dari Daffa! 💔');
       }
     } catch (err) {
       console.error('Error requesting permission:', err);
