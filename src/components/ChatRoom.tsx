@@ -552,17 +552,26 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
           
           const options: any = {
             body: body,
-            icon: latestMsg.senderPhoto || '/logo192.png',
+            icon: getFullUrl(latestMsg.senderPhoto) || '/logo192.png',
             badge: '/logo192.png',
             tag: 'chat-mbull',
             renotify: true,
+            vibrate: [200, 100, 200],
             data: { url: window.location.origin }
           };
 
           // Try service worker first
           if ('serviceWorker' in navigator) {
             navigator.serviceWorker.ready.then(registration => {
-              registration.showNotification(title, options);
+              if (registration.active) {
+                registration.active.postMessage({
+                  type: 'SHOW_NOTIFICATION',
+                  title,
+                  options
+                });
+              } else {
+                registration.showNotification(title, options);
+              }
             }).catch(() => {
               new Notification(title, options);
             });
@@ -572,7 +581,7 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
         }
       }
     }
-  }, [messages, user]);
+  }, [messages, user, notificationPermission]);
 
   const handleStickerUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -752,52 +761,6 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
-
-  useEffect(() => {
-    if (messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      
-      // Only notify if message is from others and not too old
-      // Increase tolerance to 2 minutes (120000ms) for better reliability
-      const isRecent = lastMessage.createdAt ? (Date.now() - lastMessage.createdAt < 120000) : true;
-      
-      if (lastMessage.senderId !== user.uid && isRecent) {
-        // Show desktop notification only if tab is not visible
-        if (document.visibilityState === 'hidden' && notificationPermission === 'granted') {
-          const showMsgNotification = async () => {
-            const title = `Pesan dari ${lastMessage.senderName}`;
-            const options = {
-              body: lastMessage.text || (lastMessage.type === 'audio' ? '🎵 Voice Note' : lastMessage.type === 'sticker' ? '🖼️ Sticker' : 'Kirim gambar'),
-              icon: getFullUrl(lastMessage.senderPhoto) || '/logo192.png',
-              badge: '/logo192.png',
-              vibrate: [200, 100, 200],
-              tag: 'new-message',
-              renotify: true,
-              data: {
-                url: window.location.origin
-              }
-            };
-
-            if ('serviceWorker' in navigator) {
-              const registration = await navigator.serviceWorker.ready;
-              if (registration.active) {
-                registration.active.postMessage({
-                  type: 'SHOW_NOTIFICATION',
-                  title,
-                  options
-                });
-              } else {
-                registration.showNotification(title, options);
-              }
-            } else {
-              new Notification(title, options);
-            }
-          };
-          showMsgNotification();
-        }
-      }
-    }
-  }, [messages, user.uid, notificationPermission]);
 
   useEffect(() => {
     if (replyingTo) {
