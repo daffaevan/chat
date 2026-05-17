@@ -246,6 +246,17 @@ export function ChatRoom({ user, onLogout, onRefreshUser }: ChatRoomProps) {
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Browsers will show a standard confirmation dialog
+      e.preventDefault();
+      e.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
   const checkQuotaError = useCallback((err: any) => {
     if (err?.code === 'resource-exhausted' || err?.message?.toLowerCase().includes('quota exceeded')) {
       setIsQuotaExceeded(true);
